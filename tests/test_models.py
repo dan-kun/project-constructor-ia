@@ -2,7 +2,14 @@
 
 import pytest
 
-from pcia.domain.models import Hallazgo, ProjectSpec, ResultadoAuditoria, Severidad
+from pcia.domain.models import (
+    Chequeo,
+    Hallazgo,
+    ProjectSpec,
+    ResultadoAuditoria,
+    ResultadoVerificacion,
+    Severidad,
+)
 
 UPDATES_COMPLETOS = {
     "nombre": "mi-api",
@@ -103,3 +110,23 @@ def test_pendientes_excluye_los_verdes():
         hallazgos=[hallazgo("a", Severidad.VERDE), hallazgo("b", Severidad.AMARILLO)]
     )
     assert [h.id for h in resultado.pendientes()] == ["b"]
+
+
+def test_verificacion_aprobada_sin_errores():
+    resultado = ResultadoVerificacion(
+        chequeos=[
+            Chequeo(archivo="a.py", estado="ok"),
+            Chequeo(archivo="b.md", estado="omitido", detalle="sin verificador"),
+        ]
+    )
+    assert resultado.aprobado()
+    assert resultado.errores() == []
+
+
+def test_verificacion_con_error_no_aprueba():
+    con_error = Chequeo(archivo="c.json", estado="error", detalle="json inválido")
+    resultado = ResultadoVerificacion(
+        chequeos=[Chequeo(archivo="a.py", estado="ok"), con_error]
+    )
+    assert not resultado.aprobado()
+    assert resultado.errores() == [con_error]

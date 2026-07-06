@@ -136,3 +136,41 @@ class ResultadoConstruccion(BaseModel):
     stack: str
     raiz: str
     archivos: list[str] = Field(default_factory=list)
+
+
+class Chequeo(BaseModel):
+    """Resultado de verificar un archivo generado."""
+
+    archivo: str
+    estado: Literal["ok", "error", "omitido"]
+    detalle: str = ""
+
+
+class ResultadoVerificacion(BaseModel):
+    """Salida del Verificador sobre el proyecto generado."""
+
+    chequeos: list[Chequeo] = Field(default_factory=list)
+
+    def errores(self) -> list[Chequeo]:
+        return [c for c in self.chequeos if c.estado == "error"]
+
+    def aprobado(self) -> bool:
+        return not self.errores()
+
+
+class ResolucionHallazgo(BaseModel):
+    """Cómo terminó un hallazgo de auditoría: corregido o riesgo asumido."""
+
+    hallazgo: Hallazgo
+    resolucion: Literal["corregido", "asumido"]
+
+
+class RegistroProyecto(BaseModel):
+    """Registro persistente de un proyecto construido (memoria del sistema)."""
+
+    fecha: str
+    spec: ProjectSpec
+    stack: str | None = None
+    ruta_proyecto: str | None = None
+    resoluciones: list[ResolucionHallazgo] = Field(default_factory=list)
+    verificacion: ResultadoVerificacion | None = None
