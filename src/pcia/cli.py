@@ -18,6 +18,7 @@ from pcia.orchestrator.loop import (
     CoherenciaNoResueltaError,
     LimiteDeTurnosError,
     Orquestador,
+    VerificacionFallidaError,
 )
 
 BANNER = """\
@@ -65,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         CoherenciaNoResueltaError,
         LimiteDeTurnosError,
         LLMProviderError,
+        VerificacionFallidaError,
     ) as exc:
         print(f"\nError: {exc}", file=sys.stderr)
         return 1

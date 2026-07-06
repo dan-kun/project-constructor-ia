@@ -2,8 +2,6 @@
 
 No es un agente LLM, es código determinístico. Secuencia completa:
 Entrevista → Auditoría → Construcción → Verificación → Entrega → Aprendizaje.
-En Fase 1 solo Entrevista y Entrega están implementadas; el resto son
-transiciones directas que dejan constancia por la salida.
 """
 
 from __future__ import annotations
@@ -13,16 +11,29 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable
 
+from pcia.agents.aprendizaje import Aprendizaje
 from pcia.agents.auditor import Auditor
 from pcia.agents.constructor import Constructor, DestinoInvalidoError
 from pcia.agents.interviewer import Entrevistador
-from pcia.domain.models import Hallazgo, ProjectSpec, ResultadoAuditoria, Severidad
+from pcia.agents.verificador import Verificador
+from pcia.domain.models import (
+    Hallazgo,
+    ProjectSpec,
+    RegistroProyecto,
+    ResolucionHallazgo,
+    ResultadoAuditoria,
+    ResultadoConstruccion,
+    ResultadoVerificacion,
+    Severidad,
+)
 from pcia.domain.ports import LLMProvider
+from pcia.memoria import Memoria
 from pcia.texto import slug_kebab
 
 MAX_TURNOS_ENTREVISTA = 30
 MAX_CICLOS_COHERENCIA = 3
 MAX_INTENTOS_DESTINO = 3
+MAX_CORRECCIONES_POR_ARCHIVO = 3
 
 EMOJI_SEMAFORO = {
     Severidad.VERDE: "🟢",
@@ -49,6 +60,10 @@ class CoherenciaNoResueltaError(Exception):
     """Quedaron hallazgos sin resolver tras agotar los ciclos de coherencia."""
 
 
+class VerificacionFallidaError(Exception):
+    """La verificación siguió fallando tras las correcciones y el usuario abortó."""
+
+
 class Orquestador:
     """Coordina el ciclo completo sobre una ProjectSpec compartida.
 
@@ -70,9 +85,17 @@ class Orquestador:
         self.spec = ProjectSpec()
         self.ruta_spec: Path | None = None
         self.ruta_proyecto: Path | None = None
+        self.resoluciones: list[ResolucionHallazgo] = []
+        self._construccion: ResultadoConstruccion | None = None
+        self._verificacion: ResultadoVerificacion | None = None
+        self._memoria = Memoria(self._memory_dir)
+        self._aprendizaje = Aprendizaje(self._memoria)
         # El entrevistador vive a nivel de orquestador para conservar su
-        # historial durante las repreguntas del ciclo de coherencia.
-        self._entrevistador = Entrevistador(provider, self.spec)
+        # historial durante las repreguntas del ciclo de coherencia, y
+        # arranca precargado con las preferencias históricas del usuario.
+        self._entrevistador = Entrevistador(
+            provider, self.spec, historial_previo=self._aprendizaje.resumen_historial()
+        )
 
     def ejecutar(self) -> Path:
         """Corre la máquina de estados y devuelve la ruta de la spec guardada."""
@@ -80,9 +103,9 @@ class Orquestador:
             Fase.ENTREVISTA: self._fase_entrevista,
             Fase.AUDITORIA: self._fase_auditoria,
             Fase.CONSTRUCCION: self._fase_construccion,
-            Fase.VERIFICACION: self._fase_pendiente(Fase.VERIFICACION, Fase.ENTREGA, 4),
+            Fase.VERIFICACION: self._fase_verificacion,
             Fase.ENTREGA: self._fase_entrega,
-            Fase.APRENDIZAJE: self._fase_pendiente(Fase.APRENDIZAJE, Fase.FIN, 5),
+            Fase.APRENDIZAJE: self._fase_aprendizaje,
         }
         fase = Fase.ENTREVISTA
         while fase is not Fase.FIN:
@@ -125,11 +148,14 @@ class Orquestador:
         """
         auditor = Auditor(self._provider)
         pendientes: list[Hallazgo] = []
+        detectados: dict[str, Hallazgo] = {}
         for ciclo in range(MAX_CICLOS_COHERENCIA):
             resultado = auditor.auditar(self.spec)
             self._salida(_formatear_reporte(resultado))
             pendientes = resultado.pendientes()
+            detectados.update({h.id: h for h in pendientes})
             if not pendientes:
+                self.resoluciones = self._clasificar_resoluciones(detectados)
                 return Fase.CONSTRUCCION
             if ciclo == MAX_CICLOS_COHERENCIA - 1:
                 break
@@ -140,6 +166,25 @@ class Orquestador:
             f"{MAX_CICLOS_COHERENCIA} ciclos de coherencia: "
             + ", ".join(h.id for h in pendientes)
         )
+
+    def _clasificar_resoluciones(
+        self, detectados: dict[str, Hallazgo]
+    ) -> list[ResolucionHallazgo]:
+        """Cómo terminó cada hallazgo detectado: asumido o corregido.
+
+        Solo se llama cuando la auditoría quedó en verde, así que todo
+        hallazgo que no fue asumido explícitamente terminó corregido.
+        """
+        asumidos = {
+            entrada.split(":", 1)[0].strip() for entrada in self.spec.riesgos_asumidos
+        }
+        return [
+            ResolucionHallazgo(
+                hallazgo=hallazgo,
+                resolucion="asumido" if hallazgo.id in asumidos else "corregido",
+            )
+            for hallazgo in detectados.values()
+        ]
 
     def _resolver_hallazgos(self, pendientes: list[Hallazgo]) -> None:
         for hallazgo in pendientes:
@@ -177,6 +222,7 @@ class Orquestador:
                 self._salida(str(exc))
                 continue
             self.ruta_proyecto = destino
+            self._construccion = resultado
             listado = "\n".join(f"  - {archivo}" for archivo in resultado.archivos)
             self._salida(
                 f"Proyecto generado con la plantilla '{resultado.stack}' en "
@@ -188,23 +234,73 @@ class Orquestador:
             f"No se encontró un destino válido tras {MAX_INTENTOS_DESTINO} intentos."
         )
 
-    def _fase_entrega(self) -> Fase:
-        self._memory_dir.mkdir(parents=True, exist_ok=True)
-        marca = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        nombre = slug_kebab(self.spec.nombre or "proyecto")
-        self.ruta_spec = self._memory_dir / f"{nombre}-{marca}.json"
-        self.ruta_spec.write_text(
-            self.spec.model_dump_json(indent=2), encoding="utf-8"
+    def _fase_verificacion(self) -> Fase:
+        """Ciclo de corrección (Verificación → Construcción), acotado.
+
+        Ante una falla: informar + corregir (LLM) + re-verificar, con máximo
+        de 3 reintentos por archivo; si sigue fallando se escala al usuario.
+        """
+        assert self.ruta_proyecto is not None
+        raiz = self.ruta_proyecto
+        verificador = Verificador(self._provider)
+
+        resultado = verificador.verificar(raiz)
+        self._salida(_formatear_verificacion(resultado))
+        if resultado.errores():
+            for chequeo in resultado.errores():
+                for intento in range(1, MAX_CORRECCIONES_POR_ARCHIVO + 1):
+                    self._salida(
+                        f"Corrigiendo {chequeo.archivo} "
+                        f"(intento {intento}/{MAX_CORRECCIONES_POR_ARCHIVO})…"
+                    )
+                    verificador.corregir_archivo(raiz, chequeo.archivo, chequeo.detalle)
+                    chequeo = verificador.verificar_archivo(raiz, chequeo.archivo)
+                    if chequeo.estado != "error":
+                        self._salida(f"{chequeo.archivo} corregido.")
+                        break
+            resultado = verificador.verificar(raiz)
+            self._salida(_formatear_verificacion(resultado))
+
+        self._verificacion = resultado
+        if resultado.aprobado():
+            return Fase.ENTREGA
+
+        eleccion = self._entrada(
+            "La verificación sigue fallando tras las correcciones. "
+            "¿Entrego el proyecto igual? (s/N) "
         )
-        self._salida(f"Especificación guardada en {self.ruta_spec}")
+        if eleccion.strip().lower().startswith("s"):
+            self._salida("Entrega con errores de verificación, a pedido del usuario.")
+            return Fase.ENTREGA
+        raise VerificacionFallidaError(
+            "Verificación fallida en: "
+            + ", ".join(c.archivo for c in resultado.errores())
+        )
+
+    def _fase_entrega(self) -> Fase:
+        registro = RegistroProyecto(
+            fecha=dt.datetime.now().isoformat(timespec="seconds"),
+            spec=self.spec,
+            stack=self._construccion.stack if self._construccion else None,
+            ruta_proyecto=str(self.ruta_proyecto) if self.ruta_proyecto else None,
+            resoluciones=self.resoluciones,
+            verificacion=self._verificacion,
+        )
+        self.ruta_spec = self._memoria.guardar(registro)
+        self._salida(f"Especificación y registro del proyecto guardados en {self.ruta_spec}")
         return Fase.APRENDIZAJE
 
-    def _fase_pendiente(self, fase: Fase, siguiente: Fase, numero_fase: int) -> Callable[[], Fase]:
-        def manejador() -> Fase:
-            self._salida(f"[{fase.value}] pendiente de implementación (Fase {numero_fase}).")
-            return siguiente
-
-        return manejador
+    def _fase_aprendizaje(self) -> Fase:
+        cantidad = len(self._memoria.cargar_registros())
+        mensaje = f"Memoria actualizada: {cantidad} proyecto(s) registrado(s)."
+        resumen = self._aprendizaje.resumen_historial()
+        if resumen:
+            mensaje += (
+                "\nPreferencias detectadas para precargar la próxima entrevista:\n"
+                + resumen
+            )
+        self._salida(mensaje)
+        return Fase.FIN
 
 
 def _formatear_reporte(resultado: ResultadoAuditoria) -> str:
@@ -220,4 +316,19 @@ def _formatear_reporte(resultado: ResultadoAuditoria) -> str:
         )
         if hallazgo.correccion_propuesta:
             lineas.append(f"   Corrección propuesta: {hallazgo.correccion_propuesta}")
+    return "\n".join(lineas)
+
+
+def _formatear_verificacion(resultado: ResultadoVerificacion) -> str:
+    ok = sum(1 for c in resultado.chequeos if c.estado == "ok")
+    omitidos = sum(1 for c in resultado.chequeos if c.estado == "omitido")
+    errores = resultado.errores()
+    lineas = [
+        f"Verificación de sintaxis: {ok} ok, {len(errores)} con errores, "
+        f"{omitidos} sin verificador."
+    ]
+    for chequeo in errores:
+        lineas.append(f"❌ {chequeo.archivo}: {chequeo.detalle}")
+    if not errores:
+        lineas.append("✅ Todos los archivos verificables son válidos.")
     return "\n".join(lineas)
