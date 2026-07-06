@@ -10,10 +10,14 @@ import argparse
 import sys
 from pathlib import Path
 
-from pcia.agents.interviewer import ContratoInvalidoError
+from pcia.agents.llm_json import ContratoInvalidoError
 from pcia.config import ConfigError, cargar_config, crear_provider
 from pcia.domain.ports import LLMProviderError
-from pcia.orchestrator.loop import LimiteDeTurnosError, Orquestador
+from pcia.orchestrator.loop import (
+    CoherenciaNoResueltaError,
+    LimiteDeTurnosError,
+    Orquestador,
+)
 
 BANNER = """\
 Project Constructor IA — entrevista de especificación
@@ -54,7 +58,12 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nEntrevista cancelada por el usuario.")
         return 130
-    except (ContratoInvalidoError, LimiteDeTurnosError, LLMProviderError) as exc:
+    except (
+        ContratoInvalidoError,
+        CoherenciaNoResueltaError,
+        LimiteDeTurnosError,
+        LLMProviderError,
+    ) as exc:
         print(f"\nError: {exc}", file=sys.stderr)
         return 1
     return 0

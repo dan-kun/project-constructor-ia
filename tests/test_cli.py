@@ -34,6 +34,7 @@ def test_main_ejecuta_entrevista_completa(tmp_path, monkeypatch, capsys):
         [
             respuesta_json("¿Qué querés construir?"),
             respuesta_json("Listo.", UPDATES_COMPLETOS, done=True),
+            '{"hallazgos": []}',  # pase LLM del Auditor
         ]
     )
     monkeypatch.setattr(cli, "crear_provider", lambda _config: provider)

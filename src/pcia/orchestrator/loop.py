@@ -15,11 +15,19 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable
 
+from pcia.agents.auditor import Auditor
 from pcia.agents.interviewer import Entrevistador
-from pcia.domain.models import ProjectSpec
+from pcia.domain.models import Hallazgo, ProjectSpec, ResultadoAuditoria, Severidad
 from pcia.domain.ports import LLMProvider
 
 MAX_TURNOS_ENTREVISTA = 30
+MAX_CICLOS_COHERENCIA = 3
+
+EMOJI_SEMAFORO = {
+    Severidad.VERDE: "🟢",
+    Severidad.AMARILLO: "🟡",
+    Severidad.ROJO: "🔴",
+}
 
 
 class Fase(str, Enum):
@@ -34,6 +42,10 @@ class Fase(str, Enum):
 
 class LimiteDeTurnosError(Exception):
     """La entrevista superó el máximo de turnos permitido (loop acotado)."""
+
+
+class CoherenciaNoResueltaError(Exception):
+    """Quedaron hallazgos sin resolver tras agotar los ciclos de coherencia."""
 
 
 class Orquestador:
@@ -56,12 +68,15 @@ class Orquestador:
         self._salida = salida
         self.spec = ProjectSpec()
         self.ruta_spec: Path | None = None
+        # El entrevistador vive a nivel de orquestador para conservar su
+        # historial durante las repreguntas del ciclo de coherencia.
+        self._entrevistador = Entrevistador(provider, self.spec)
 
     def ejecutar(self) -> Path:
         """Corre la máquina de estados y devuelve la ruta de la spec guardada."""
         manejadores: dict[Fase, Callable[[], Fase]] = {
             Fase.ENTREVISTA: self._fase_entrevista,
-            Fase.AUDITORIA: self._fase_pendiente(Fase.AUDITORIA, Fase.CONSTRUCCION, 2),
+            Fase.AUDITORIA: self._fase_auditoria,
             Fase.CONSTRUCCION: self._fase_pendiente(Fase.CONSTRUCCION, Fase.VERIFICACION, 3),
             Fase.VERIFICACION: self._fase_pendiente(Fase.VERIFICACION, Fase.ENTREGA, 4),
             Fase.ENTREGA: self._fase_entrega,
@@ -76,7 +91,7 @@ class Orquestador:
     # --- fases -------------------------------------------------------------
 
     def _fase_entrevista(self) -> Fase:
-        entrevistador = Entrevistador(self._provider, self.spec)
+        entrevistador = self._entrevistador
         respuesta = entrevistador.iniciar()
 
         for _ in range(MAX_TURNOS_ENTREVISTA):
@@ -98,6 +113,54 @@ class Orquestador:
             "completar la especificación."
         )
 
+    def _fase_auditoria(self) -> Fase:
+        """Ciclo de coherencia (Auditoría → Entrevista), acotado.
+
+        Ante cada hallazgo se repregunta al usuario con la corrección
+        propuesta; puede corregir (vuelve por el Entrevistador) o asumir el
+        riesgo explícitamente (queda documentado en la spec). No se construye
+        sobre una spec con conflictos no resueltos.
+        """
+        auditor = Auditor(self._provider)
+        pendientes: list[Hallazgo] = []
+        for ciclo in range(MAX_CICLOS_COHERENCIA):
+            resultado = auditor.auditar(self.spec)
+            self._salida(_formatear_reporte(resultado))
+            pendientes = resultado.pendientes()
+            if not pendientes:
+                return Fase.CONSTRUCCION
+            if ciclo == MAX_CICLOS_COHERENCIA - 1:
+                break
+            self._resolver_hallazgos(pendientes)
+
+        raise CoherenciaNoResueltaError(
+            "Quedaron hallazgos sin resolver tras "
+            f"{MAX_CICLOS_COHERENCIA} ciclos de coherencia: "
+            + ", ".join(h.id for h in pendientes)
+        )
+
+    def _resolver_hallazgos(self, pendientes: list[Hallazgo]) -> None:
+        for hallazgo in pendientes:
+            eleccion = self._entrada(
+                f"¿Asumís el riesgo '{hallazgo.id}'? (s = asumir / N = corregir) "
+            )
+            if eleccion.strip().lower().startswith("s"):
+                self.spec.riesgos_asumidos.append(f"{hallazgo.id}: {hallazgo.mensaje}")
+                self._salida(f"Riesgo asumido y documentado: {hallazgo.id}")
+                continue
+            detalle = self._entrada(
+                "¿Cómo lo querés resolver? (enter = aplicar la corrección propuesta) "
+            )
+            respuesta = self._entrevistador.responder(
+                f"El Auditor encontró una incongruencia [{hallazgo.id}]: "
+                f"{hallazgo.mensaje} Corrección propuesta: "
+                f"{hallazgo.correccion_propuesta or 'sin propuesta específica'}. "
+                "Decisión del usuario: "
+                f"{detalle.strip() or 'aplicar la corrección propuesta'}. "
+                "Actualizá la especificación en consecuencia."
+            )
+            self._salida(respuesta.message_to_user)
+
     def _fase_entrega(self) -> Fase:
         self._memory_dir.mkdir(parents=True, exist_ok=True)
         marca = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -115,6 +178,22 @@ class Orquestador:
             return siguiente
 
         return manejador
+
+
+def _formatear_reporte(resultado: ResultadoAuditoria) -> str:
+    semaforo = resultado.semaforo()
+    lineas = [
+        f"Auditoría de coherencia — semáforo: {EMOJI_SEMAFORO[semaforo]} {semaforo.value}"
+    ]
+    if not resultado.hallazgos:
+        lineas.append("Sin hallazgos: la especificación es coherente.")
+    for hallazgo in resultado.hallazgos:
+        lineas.append(
+            f"{EMOJI_SEMAFORO[hallazgo.severidad]} [{hallazgo.id}] {hallazgo.mensaje}"
+        )
+        if hallazgo.correccion_propuesta:
+            lineas.append(f"   Corrección propuesta: {hallazgo.correccion_propuesta}")
+    return "\n".join(lineas)
 
 
 def _slug(texto: str) -> str:
