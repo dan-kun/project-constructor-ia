@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from pcia.agents.auditor import Auditor
+from pcia.agents.constructor import Constructor, DestinoInvalidoError
 from pcia.agents.interviewer import Entrevistador
 from pcia.domain.models import Hallazgo, ProjectSpec, ResultadoAuditoria, Severidad
 from pcia.domain.ports import LLMProvider
@@ -21,6 +22,7 @@ from pcia.texto import slug_kebab
 
 MAX_TURNOS_ENTREVISTA = 30
 MAX_CICLOS_COHERENCIA = 3
+MAX_INTENTOS_DESTINO = 3
 
 EMOJI_SEMAFORO = {
     Severidad.VERDE: "🟢",
@@ -67,6 +69,7 @@ class Orquestador:
         self._salida = salida
         self.spec = ProjectSpec()
         self.ruta_spec: Path | None = None
+        self.ruta_proyecto: Path | None = None
         # El entrevistador vive a nivel de orquestador para conservar su
         # historial durante las repreguntas del ciclo de coherencia.
         self._entrevistador = Entrevistador(provider, self.spec)
@@ -76,7 +79,7 @@ class Orquestador:
         manejadores: dict[Fase, Callable[[], Fase]] = {
             Fase.ENTREVISTA: self._fase_entrevista,
             Fase.AUDITORIA: self._fase_auditoria,
-            Fase.CONSTRUCCION: self._fase_pendiente(Fase.CONSTRUCCION, Fase.VERIFICACION, 3),
+            Fase.CONSTRUCCION: self._fase_construccion,
             Fase.VERIFICACION: self._fase_pendiente(Fase.VERIFICACION, Fase.ENTREGA, 4),
             Fase.ENTREGA: self._fase_entrega,
             Fase.APRENDIZAJE: self._fase_pendiente(Fase.APRENDIZAJE, Fase.FIN, 5),
@@ -159,6 +162,31 @@ class Orquestador:
                 "Actualizá la especificación en consecuencia."
             )
             self._salida(respuesta.message_to_user)
+
+    def _fase_construccion(self) -> Fase:
+        """Genera el scaffold en un directorio destino elegido por el usuario."""
+        constructor = Constructor(self._provider)
+        sugerido = Path.cwd() / slug_kebab(self.spec.nombre or "proyecto")
+
+        for _ in range(MAX_INTENTOS_DESTINO):
+            crudo = self._entrada(f"¿Dónde genero el proyecto? (enter = {sugerido}) ")
+            destino = Path(crudo.strip() or sugerido).expanduser()
+            try:
+                resultado = constructor.construir(self.spec, destino)
+            except DestinoInvalidoError as exc:
+                self._salida(str(exc))
+                continue
+            self.ruta_proyecto = destino
+            listado = "\n".join(f"  - {archivo}" for archivo in resultado.archivos)
+            self._salida(
+                f"Proyecto generado con la plantilla '{resultado.stack}' en "
+                f"{destino} ({len(resultado.archivos)} archivos):\n{listado}"
+            )
+            return Fase.VERIFICACION
+
+        raise DestinoInvalidoError(
+            f"No se encontró un destino válido tras {MAX_INTENTOS_DESTINO} intentos."
+        )
 
     def _fase_entrega(self) -> Fase:
         self._memory_dir.mkdir(parents=True, exist_ok=True)

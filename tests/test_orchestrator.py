@@ -5,6 +5,7 @@ import json
 import pytest
 
 from conftest import FakeProvider
+from pcia.agents.constructor import DestinoInvalidoError
 from pcia.orchestrator.loop import (
     MAX_TURNOS_ENTREVISTA,
     CoherenciaNoResueltaError,
@@ -13,6 +14,7 @@ from pcia.orchestrator.loop import (
 )
 
 SIN_HALLAZGOS_LLM = '{"hallazgos": []}'
+DOCS_LLM = json.dumps({"readme_markdown": "# mi api\n", "adr_markdown": "# ADR-001\n"})
 
 
 def respuesta_json(mensaje="ok", updates=None, done=False) -> str:
@@ -57,15 +59,18 @@ def crear_orquestador(provider, entradas, tmp_path):
     return orq, salidas
 
 
-def test_ciclo_completo_guarda_la_spec(tmp_path):
+def test_ciclo_completo_guarda_spec_y_genera_proyecto(tmp_path):
     provider = FakeProvider(
         [
             respuesta_json("¿Qué querés construir?"),
             respuesta_json("Listo, resumen final.", UPDATES_COMPLETOS, done=True),
             SIN_HALLAZGOS_LLM,  # pase LLM del Auditor
+            DOCS_LLM,  # README y ADR del Constructor
         ]
     )
-    orq, salidas = crear_orquestador(provider, ["una API de facturación en python"], tmp_path)
+    proyecto = tmp_path / "proyecto"
+    entradas = ["una API de facturación en python", str(proyecto)]
+    orq, salidas = crear_orquestador(provider, entradas, tmp_path)
 
     ruta = orq.ejecutar()
 
@@ -74,8 +79,14 @@ def test_ciclo_completo_guarda_la_spec(tmp_path):
     assert datos["nombre"] == "mi api"
     assert datos["framework"] == "fastapi"
     assert ruta.name.startswith("mi-api-")  # slug del nombre
+    # proyecto generado en el destino elegido
+    assert orq.ruta_proyecto == proyecto
+    assert (proyecto / "pyproject.toml").exists()
+    assert (proyecto / "README.md").exists()
+    assert (proyecto / "docs/adr/ADR-001-decisiones-iniciales.md").exists()
     assert any("🟢" in s for s in salidas)  # semáforo verde reportado
-    assert any("construccion" in s for s in salidas)  # stub de la fase 3
+    assert any("Proyecto generado" in s for s in salidas)
+    assert any("verificacion" in s for s in salidas)  # stub de la fase 4
     assert any("Especificación guardada" in s for s in salidas)
 
 
@@ -85,9 +96,10 @@ def test_done_prematuro_recibe_feedback_y_continua(tmp_path):
             respuesta_json("Cerramos acá.", {"nombre": "x"}, done=True),  # prematuro
             respuesta_json("Perdón, sigo.", UPDATES_COMPLETOS, done=True),
             SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
         ]
     )
-    orq, _ = crear_orquestador(provider, [], tmp_path)
+    orq, _ = crear_orquestador(provider, [str(tmp_path / "proyecto")], tmp_path)
 
     ruta = orq.ejecutar()
 
@@ -119,9 +131,11 @@ def test_hallazgo_corregido_via_entrevistador_y_reauditoria(tmp_path):
                 done=True,
             ),
             SIN_HALLAZGOS_LLM,  # auditoría 2: ya coherente
+            DOCS_LLM,
         ]
     )
-    entradas = ["n", ""]  # no asume el riesgo; acepta la corrección propuesta
+    # no asume el riesgo; acepta la corrección propuesta; elige destino
+    entradas = ["n", "", str(tmp_path / "proyecto")]
     orq, salidas = crear_orquestador(provider, entradas, tmp_path)
 
     ruta = orq.ejecutar()
@@ -142,9 +156,10 @@ def test_riesgo_asumido_queda_documentado_y_no_bloquea(tmp_path):
             respuesta_json("Resumen.", UPDATES_INCOHERENTES, done=True),
             SIN_HALLAZGOS_LLM,  # auditoría 1
             SIN_HALLAZGOS_LLM,  # auditoría 2: el riesgo asumido ya no se reporta
+            DOCS_LLM,
         ]
     )
-    orq, salidas = crear_orquestador(provider, ["s"], tmp_path)
+    orq, salidas = crear_orquestador(provider, ["s", str(tmp_path / "proyecto")], tmp_path)
 
     ruta = orq.ejecutar()
 
@@ -170,4 +185,46 @@ def test_coherencia_no_resuelta_escala_tras_el_limite(tmp_path):
     orq, _ = crear_orquestador(provider, entradas, tmp_path)
 
     with pytest.raises(CoherenciaNoResueltaError, match="serverless-websockets"):
+        orq.ejecutar()
+
+
+# --- fase de construcción -----------------------------------------------------
+
+
+def test_destino_ocupado_reintenta_y_luego_construye(tmp_path):
+    ocupado = tmp_path / "ocupado"
+    ocupado.mkdir()
+    (ocupado / "algo.txt").write_text("x", encoding="utf-8")
+    libre = tmp_path / "libre"
+
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
+        ]
+    )
+    orq, salidas = crear_orquestador(provider, [str(ocupado), str(libre)], tmp_path)
+
+    orq.ejecutar()
+
+    assert orq.ruta_proyecto == libre
+    assert (libre / "pyproject.toml").exists()
+    assert any("no está vacío" in s for s in salidas)
+
+
+def test_destino_siempre_ocupado_escala(tmp_path):
+    ocupado = tmp_path / "ocupado"
+    ocupado.mkdir()
+    (ocupado / "algo.txt").write_text("x", encoding="utf-8")
+
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            SIN_HALLAZGOS_LLM,
+        ]
+    )
+    orq, _ = crear_orquestador(provider, [str(ocupado)] * 3, tmp_path)
+
+    with pytest.raises(DestinoInvalidoError, match="3 intentos"):
         orq.ejecutar()

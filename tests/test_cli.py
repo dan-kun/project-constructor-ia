@@ -8,16 +8,16 @@ from pcia import cli
 UPDATES_COMPLETOS = {
     "nombre": "demo",
     "descripcion": "demo",
-    "tipo_proyecto": "cli",
+    "tipo_proyecto": "api",
     "lenguaje": "python",
-    "framework": "ninguno",
-    "arquitectura": "simple",
-    "base_datos": "ninguna",
-    "autenticacion": "ninguna",
+    "framework": "fastapi",
+    "arquitectura": "capas",
+    "base_datos": "postgresql",
+    "autenticacion": "jwt",
     "gestion_secretos": "variables de entorno",
-    "infraestructura": "local",
+    "infraestructura": "docker",
     "ci_cd": "github actions",
-    "alcance": "prototipo",
+    "alcance": "producto interno",
 }
 
 
@@ -35,10 +35,12 @@ def test_main_ejecuta_entrevista_completa(tmp_path, monkeypatch, capsys):
             respuesta_json("¿Qué querés construir?"),
             respuesta_json("Listo.", UPDATES_COMPLETOS, done=True),
             '{"hallazgos": []}',  # pase LLM del Auditor
+            json.dumps({"readme_markdown": "# demo\n", "adr_markdown": "# ADR-001\n"}),
         ]
     )
     monkeypatch.setattr(cli, "crear_provider", lambda _config: provider)
-    monkeypatch.setattr("builtins.input", lambda *_: "un cli de demo")
+    entradas = iter(["una api de demo", str(tmp_path / "proyecto")])
+    monkeypatch.setattr("builtins.input", lambda *_: next(entradas))
 
     codigo = cli.main(["--config", str(config)])
 
@@ -46,6 +48,7 @@ def test_main_ejecuta_entrevista_completa(tmp_path, monkeypatch, capsys):
     assert "¿Qué querés construir?" in capsys.readouterr().out
     guardados = list((tmp_path / "memory").glob("demo-*.json"))
     assert len(guardados) == 1
+    assert (tmp_path / "proyecto" / "README.md").exists()
 
 
 def test_main_config_inexistente_devuelve_1(tmp_path, capsys):

@@ -10,6 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from pcia.agents.constructor import ConstruccionError
 from pcia.agents.llm_json import ContratoInvalidoError
 from pcia.config import ConfigError, cargar_config, crear_provider
 from pcia.domain.ports import LLMProviderError
@@ -59,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\nEntrevista cancelada por el usuario.")
         return 130
     except (
+        ConstruccionError,
         ContratoInvalidoError,
         CoherenciaNoResueltaError,
         LimiteDeTurnosError,
