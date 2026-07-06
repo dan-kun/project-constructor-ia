@@ -9,8 +9,6 @@ transiciones directas que dejan constancia por la salida.
 from __future__ import annotations
 
 import datetime as dt
-import re
-import unicodedata
 from enum import Enum
 from pathlib import Path
 from typing import Callable
@@ -19,6 +17,7 @@ from pcia.agents.auditor import Auditor
 from pcia.agents.interviewer import Entrevistador
 from pcia.domain.models import Hallazgo, ProjectSpec, ResultadoAuditoria, Severidad
 from pcia.domain.ports import LLMProvider
+from pcia.texto import slug_kebab
 
 MAX_TURNOS_ENTREVISTA = 30
 MAX_CICLOS_COHERENCIA = 3
@@ -164,7 +163,7 @@ class Orquestador:
     def _fase_entrega(self) -> Fase:
         self._memory_dir.mkdir(parents=True, exist_ok=True)
         marca = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        nombre = _slug(self.spec.nombre or "proyecto")
+        nombre = slug_kebab(self.spec.nombre or "proyecto")
         self.ruta_spec = self._memory_dir / f"{nombre}-{marca}.json"
         self.ruta_spec.write_text(
             self.spec.model_dump_json(indent=2), encoding="utf-8"
@@ -194,11 +193,3 @@ def _formatear_reporte(resultado: ResultadoAuditoria) -> str:
         if hallazgo.correccion_propuesta:
             lineas.append(f"   Corrección propuesta: {hallazgo.correccion_propuesta}")
     return "\n".join(lineas)
-
-
-def _slug(texto: str) -> str:
-    sin_acentos = (
-        unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
-    )
-    slug = re.sub(r"[^a-z0-9]+", "-", sin_acentos.lower()).strip("-")
-    return slug or "proyecto"

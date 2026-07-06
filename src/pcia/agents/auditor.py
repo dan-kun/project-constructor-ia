@@ -13,7 +13,6 @@ vuelven a reportar en ninguna de las dos capas.
 
 from __future__ import annotations
 
-import unicodedata
 from pathlib import Path
 
 import yaml
@@ -22,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pcia.agents.llm_json import consultar_con_contrato
 from pcia.domain.models import Hallazgo, ProjectSpec, ResultadoAuditoria, Severidad
 from pcia.domain.ports import ChatMessage, LLMProvider
+from pcia.texto import normalizar
 
 RUTA_REGLAS = Path(__file__).parent / "rules" / "incompatibilidades.yaml"
 RUTA_PROMPT = Path(__file__).parent / "prompts" / "auditor.md"
@@ -159,17 +159,10 @@ def _condicion_matchea(condicion: Condicion, spec: ProjectSpec) -> bool:
             valor = " ".join(valor)
         if not valor:
             continue
-        texto = _normalizar(valor)
-        if any(_normalizar(palabra) in texto for palabra in condicion.contiene):
+        texto = normalizar(valor)
+        if any(normalizar(palabra) in texto for palabra in condicion.contiene):
             return True
     return False
-
-
-def _normalizar(texto: str) -> str:
-    sin_acentos = (
-        unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
-    )
-    return sin_acentos.lower()
 
 
 def _ids_asumidos(spec: ProjectSpec) -> set[str]:
