@@ -27,7 +27,7 @@ cuestiona y advierte, no solo genera.
 | Entrevistador | Elicitación adaptativa de requisitos | LLM con salida JSON estricta: `{message_to_user, updates, done}`; deriva preguntas del estado de la spec |
 | Auditor | Detección de incongruencias técnicas | **Híbrido**: matriz de reglas determinísticas (YAML) + análisis LLM para lo no catalogado. Salida: hallazgos con severidad (verde/amarillo/rojo) y corrección propuesta |
 | Constructor | Genera scaffold, configs, docs, ADRs | Plantillas por stack + LLM para lo específico. Fase 3: FastAPI, módulo Odoo, NestJS |
-| Verificador | Valida lo construido | Fase 4a: parseo de sintaxis (yaml/toml/json/py). Fase 4b: builds en Docker, linters, smoke tests |
+| Verificador | Valida lo construido | Fase 4a: parseo de sintaxis (yaml/toml/json/py). Fase 4b: builds en Docker, linters, smoke tests. Fase 7: corrección multi-archivo de fallas de build (ciclo acotado) |
 | Aprendizaje | Persiste y consolida experiencia | Registra spec final, hallazgos, resoluciones, fallas por stack, feedback del usuario |
 
 ## 4. Ciclos (orquestación)
@@ -39,6 +39,12 @@ Secuencia: Análisis de documentos (opcional) → Entrevista → Auditoría → 
   (queda documentado en el ADR como riesgo aceptado).
 - **Ciclo de corrección** (Verificación → Construcción): ante falla, informar + corregir +
   re-verificar. **Máximo 3 reintentos por componente**, luego escalar al usuario.
+- **Ciclo de corrección profunda** (Fase 7): ante falla de build/smoke, el corrector recibe
+  el error + el scaffold completo, diagnostica la causa raíz y corrige múltiples archivos.
+  **Máximo 2 ciclos** (cada uno implica un rebuild) y solo sobre archivos existentes; si el
+  corrector no propone cambios o se agota el límite, escala al usuario como siempre. Cada
+  diagnóstico queda persistido: si se repite entre proyectos del mismo stack, el defecto
+  está en la plantilla (lección de la primera corrida real: `npm ci` sin lockfile).
 - **Ciclo de mejora continua** (Aprendizaje → próxima Entrevista): la memoria precarga
   respuestas, acorta la entrevista y agrega reglas al Auditor.
 - Mini-ciclo transversal: **toda salida LLM malformada se reintenta con el error como
@@ -97,6 +103,11 @@ Consecuencias de diseño:
    `preguntas_abiertas`) y el Entrevistador las confirma con el usuario — proponer, no asumir,
    mismo principio que la precarga del Aprendizaje. Criterio: entrevista más corta partiendo
    de un documento real, con cada propuesta trazable a su cita.
+7. **Fase 7 — Corrección de builds**: autocorrección acotada de fallas de la verificación
+   profunda con contrato multi-archivo (`{diagnostico, correcciones: [{archivo, contenido}]}`).
+   El corrector puede declarar "no se resuelve tocando el scaffold" (correcciones vacías) y
+   entonces se escala directo. Criterio: un build roto por un defecto simple del scaffold se
+   entrega en verde sin intervención humana, y el diagnóstico queda registrado en la memoria.
 
 ## 8. Formato de salida del Entrevistador (contrato)
 

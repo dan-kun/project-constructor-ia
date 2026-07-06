@@ -62,8 +62,10 @@ docs/              # DISENO.md (diseño completo y roadmap)
 - [x] Fase 4b: builds en Docker, smoke tests en la imagen y linters opcionales (declarados por plantilla)
 - [x] Fase 5: Memoria persistente (RegistroProyecto en `memory/`) y Agente de Aprendizaje (precarga de entrevista)
 - [x] Fase 6: Agente Analista de Documentos (`--docs`: extrae propuestas con evidencia de la documentación del cliente y precarga la entrevista)
+- [x] Fase 7: corrección acotada de fallas de build (contrato multi-archivo, máx. 2 ciclos, diagnósticos persistidos en el registro)
+- [x] Corridas reales end-to-end con LLM local (llama.cpp/Qwen3-30B): FastAPI ok; NestJS destapó el bug `npm ci` sin lockfile (corregido)
 
-**Roadmap completo (5 fases + Fase 6 de análisis documental).** Posibles próximos pasos: corrida real end-to-end con un LLM de verdad, autocorrección de fallas de build, más plantillas/reglas, soporte PDF en el Analista.
+**Roadmap completo (7 fases).** Posibles próximos pasos: más plantillas/reglas, soporte PDF en el Analista, corridas reales con los otros dos adaptadores.
 
 ## Comandos
 
