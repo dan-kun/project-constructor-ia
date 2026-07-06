@@ -37,10 +37,13 @@ class RespuestaEntrevistador(BaseModel):
 class Entrevistador:
     """Conduce la entrevista y actualiza la ProjectSpec compartida."""
 
-    def __init__(self, provider: LLMProvider, spec: ProjectSpec) -> None:
+    def __init__(
+        self, provider: LLMProvider, spec: ProjectSpec, historial_previo: str = ""
+    ) -> None:
         self._provider = provider
         self.spec = spec
         self.historial: list[ChatMessage] = []
+        self._historial_previo = historial_previo
         self._plantilla = RUTA_PROMPT.read_text(encoding="utf-8")
 
     def iniciar(self) -> RespuestaEntrevistador:
@@ -68,4 +71,8 @@ class Entrevistador:
             )
             .replace("[[CAMPOS_FALTANTES]]", ", ".join(faltantes) or "ninguno")
             .replace("[[CAMPOS_VALIDOS]]", ", ".join(sorted(self.spec.campos_validos())))
+            .replace(
+                "[[HISTORIAL]]",
+                self._historial_previo or "ninguno (es el primer proyecto del usuario)",
+            )
         )

@@ -23,6 +23,15 @@ que quiere crear.
   dejes vacío.
 - Todos los textos al usuario van en español, con tono profesional y cercano.
 
+# Historial de proyectos anteriores del usuario
+
+[[HISTORIAL]]
+
+Si hay historial, usalo para proponer valores por defecto y acortar la
+entrevista (por ejemplo: "en tus últimos proyectos usaste PostgreSQL,
+¿mantenemos?"). Siempre confirmá con el usuario antes de aplicar un valor
+del historial: proponé, no asumas.
+
 # Estado actual de la especificación
 
 [[ESTADO_SPEC]]

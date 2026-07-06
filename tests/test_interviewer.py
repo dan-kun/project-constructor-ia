@@ -45,7 +45,23 @@ def test_system_prompt_incluye_estado_y_faltantes():
     system_prompt, _ = provider.llamadas[0]
     assert "ya-definido" in system_prompt
     assert "lenguaje" in system_prompt  # aparece entre los faltantes
-    assert "[[ESTADO_SPEC]]" not in system_prompt  # placeholders reemplazados
+    assert "[[" not in system_prompt  # placeholders reemplazados
+
+
+def test_system_prompt_incluye_historial_previo():
+    provider = FakeProvider([respuesta_json()])
+    historial = "- base_datos: postgresql (en 2 de 3 proyectos)"
+    Entrevistador(provider, ProjectSpec(), historial_previo=historial).iniciar()
+
+    system_prompt, _ = provider.llamadas[0]
+    assert historial in system_prompt
+
+
+def test_sin_historial_el_prompt_lo_dice():
+    provider = FakeProvider([respuesta_json()])
+    Entrevistador(provider, ProjectSpec()).iniciar()
+    system_prompt, _ = provider.llamadas[0]
+    assert "primer proyecto" in system_prompt
 
 
 def test_json_malformado_reintenta_con_feedback_del_error():
