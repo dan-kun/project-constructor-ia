@@ -58,8 +58,10 @@ docs/              # DISENO.md (diseño completo y roadmap)
 - [x] Fase 2: Agente Auditor (matriz de reglas + validación LLM, semáforo de coherencia)
 - [x] Fase 3: Agente Constructor (plantillas: FastAPI, módulo Odoo, NestJS)
 - [x] Fase 4a: Agente Verificador de sintaxis + ciclo de corrección acotado
+- [x] Fase 4b: builds en Docker, smoke tests en la imagen y linters opcionales (declarados por plantilla)
 - [x] Fase 5: Memoria persistente (RegistroProyecto en `memory/`) y Agente de Aprendizaje (precarga de entrevista)
-- [ ] **Fase 4b (SIGUIENTE)**: builds en Docker, linters y smoke tests en el Verificador
+
+**Roadmap de las 5 fases completo.** Posibles próximos pasos: corrida real end-to-end con un LLM de verdad, autocorrección de fallas de build, más plantillas/reglas.
 
 ## Comandos
 
