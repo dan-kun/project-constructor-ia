@@ -10,6 +10,11 @@ Dos capas:
   y linters host-side, según lo que declare la plantilla del stack. Si la
   herramienta no está disponible (docker, linter), el chequeo se reporta
   como ``omitido``: degradación con gracia, nunca falla por el entorno.
+
+Fase 7: las fallas profundas también se corrigen (``corregir_build``), pero
+con un contrato multi-archivo: el LLM recibe el error del build más el
+contenido del scaffold y propone correcciones sobre archivos existentes.
+El ciclo acotado (y la escalada al usuario) lo maneja el orquestador.
 """
 
 from __future__ import annotations
@@ -36,9 +41,14 @@ from pcia.domain.models import Chequeo, ResultadoVerificacion, VerificacionProfu
 from pcia.domain.ports import ChatMessage, LLMProvider
 
 RUTA_PROMPT = Path(__file__).parent / "prompts" / "verificador.md"
+RUTA_PROMPT_BUILD = Path(__file__).parent / "prompts" / "corrector_build.md"
 TIMEOUT_BUILD_SEGUNDOS = 600.0
 TIMEOUT_COMANDO_SEGUNDOS = 180.0
 MAX_DETALLE = 1500
+# Contexto acotado para el corrector de builds (modelos locales tienen poco).
+MAX_CONTENIDO_ARCHIVO = 4000
+# Archivos que no afectan builds: no gastan contexto del corrector.
+IRRELEVANTES_PARA_BUILD = ("README.md", "docs/")
 
 
 class CorreccionArchivo(BaseModel):
@@ -47,6 +57,28 @@ class CorreccionArchivo(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contenido_corregido: str = Field(min_length=1)
+
+
+class CorreccionArchivoBuild(BaseModel):
+    """Una corrección propuesta por el corrector de builds (Fase 7)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    archivo: str = Field(min_length=1)
+    contenido_corregido: str = Field(min_length=1)
+
+
+class CorreccionBuild(BaseModel):
+    """Contrato de salida del corrector de builds.
+
+    ``correcciones`` vacía es válida: significa que el LLM diagnosticó que
+    la falla no se resuelve tocando el scaffold (se escala al usuario).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    diagnostico: str = Field(min_length=1)
+    correcciones: list[CorreccionArchivoBuild] = Field(default_factory=list)
 
 
 def _chequear_python(texto: str) -> None:
@@ -95,6 +127,7 @@ class Verificador:
     def __init__(self, provider: LLMProvider) -> None:
         self._provider = provider
         self._plantilla = RUTA_PROMPT.read_text(encoding="utf-8")
+        self._plantilla_build = RUTA_PROMPT_BUILD.read_text(encoding="utf-8")
 
     def verificar(self, raiz: Path) -> ResultadoVerificacion:
         """Chequea la sintaxis de todos los archivos bajo ``raiz``."""
@@ -203,6 +236,60 @@ class Verificador:
             self._provider, system_prompt, mensajes, CorreccionArchivo
         )
         ruta.write_text(correccion.contenido_corregido, encoding="utf-8")
+
+    def corregir_build(
+        self, raiz: Path, errores: list[Chequeo], archivos: list[str]
+    ) -> CorreccionBuild:
+        """Corrección multi-archivo de fallas profundas (Fase 7).
+
+        El LLM recibe los errores y el contenido del scaffold, diagnostica la
+        causa raíz y propone correcciones SOLO sobre archivos existentes (el
+        contrato lo valida y reintenta con feedback). Las correcciones se
+        aplican recién cuando el contrato completo es válido.
+        """
+        relevantes = [
+            relativa
+            for relativa in archivos
+            if not relativa.startswith(IRRELEVANTES_PARA_BUILD)
+        ]
+        contenidos = "\n\n".join(
+            f"--- {relativa} ---\n"
+            + (raiz / relativa).read_text(encoding="utf-8")[:MAX_CONTENIDO_ARCHIVO]
+            for relativa in relevantes
+        )
+        system_prompt = (
+            self._plantilla_build.replace(
+                "[[ERRORES]]",
+                "\n".join(f"[{c.archivo}] {c.detalle}" for c in errores),
+            )
+            .replace("[[LISTADO]]", "\n".join(f"- {a}" for a in relevantes))
+            .replace("[[CONTENIDOS]]", contenidos)
+        )
+        mensajes = [
+            ChatMessage(
+                role="user",
+                content="Diagnosticá la falla y corregí según tus instrucciones.",
+            )
+        ]
+
+        def validar(correccion: CorreccionBuild) -> None:
+            desconocidos = sorted(
+                {c.archivo for c in correccion.correcciones} - set(relevantes)
+            )
+            if desconocidos:
+                raise ValueError(
+                    f"Archivos fuera del scaffold: {', '.join(desconocidos)}. "
+                    f"Solo podés corregir: {', '.join(relevantes)}"
+                )
+
+        correccion, _ = consultar_con_contrato(
+            self._provider, system_prompt, mensajes, CorreccionBuild, postproceso=validar
+        )
+        for cambio in correccion.correcciones:
+            (raiz / cambio.archivo).write_text(
+                cambio.contenido_corregido, encoding="utf-8"
+            )
+        return correccion
 
 
 def _binario_disponible(nombre: str) -> bool:

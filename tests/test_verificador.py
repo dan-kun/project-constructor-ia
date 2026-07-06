@@ -9,7 +9,7 @@ from conftest import FakeProvider
 from pcia.agents import verificador as modulo_verificador
 from pcia.agents.llm_json import ContratoInvalidoError
 from pcia.agents.verificador import Verificador
-from pcia.domain.models import VerificacionProfunda
+from pcia.domain.models import Chequeo, VerificacionProfunda
 
 
 def crear_verificador(respuestas=None):
@@ -108,6 +108,96 @@ def test_correccion_malformada_reintenta_y_luego_escala(tmp_path):
         verificador.corregir_archivo(tmp_path, "config.json", "json inválido")
     # el archivo no se tocó
     assert (tmp_path / "config.json").read_text(encoding="utf-8") == "{roto"
+
+
+# --- corrector de builds (Fase 7) ---------------------------------------------
+
+
+ERROR_BUILD = [
+    Chequeo(archivo="docker-build", estado="error", detalle="código 1: npm ci falló")
+]
+
+
+def scaffold_nestjs_minimo(tmp_path):
+    escribir(tmp_path, "Dockerfile", "RUN npm ci\n")
+    escribir(tmp_path, "package.json", '{"name": "demo"}')
+    escribir(tmp_path, "README.md", "# demo")
+    escribir(tmp_path, "docs/adr/ADR-001-decisiones-iniciales.md", "# ADR")
+    return ["Dockerfile", "package.json", "README.md", "docs/adr/ADR-001-decisiones-iniciales.md"]
+
+
+def correccion_build_json(archivos_corregidos, diagnostico="faltaba el lockfile"):
+    return json.dumps(
+        {
+            "diagnostico": diagnostico,
+            "correcciones": [
+                {"archivo": a, "contenido_corregido": c} for a, c in archivos_corregidos
+            ],
+        }
+    )
+
+
+def test_corregir_build_aplica_correcciones_multiarchivo(tmp_path):
+    archivos = scaffold_nestjs_minimo(tmp_path)
+    respuesta = correccion_build_json(
+        [("Dockerfile", "RUN npm install\n"), ("package.json", '{"name": "demo2"}')]
+    )
+    verificador = Verificador(FakeProvider([respuesta]))
+
+    correccion = verificador.corregir_build(tmp_path, ERROR_BUILD, archivos)
+
+    assert correccion.diagnostico == "faltaba el lockfile"
+    assert (tmp_path / "Dockerfile").read_text(encoding="utf-8") == "RUN npm install\n"
+    assert (tmp_path / "package.json").read_text(encoding="utf-8") == '{"name": "demo2"}'
+
+
+def test_corregir_build_rechaza_archivos_fuera_del_scaffold_y_reintenta(tmp_path):
+    archivos = scaffold_nestjs_minimo(tmp_path)
+    invalida = correccion_build_json([("../afuera.txt", "x")])
+    valida = correccion_build_json([("Dockerfile", "RUN npm install\n")])
+    provider = FakeProvider([invalida, valida])
+
+    Verificador(provider).corregir_build(tmp_path, ERROR_BUILD, archivos)
+
+    assert len(provider.llamadas) == 2
+    _, mensajes_reintento = provider.llamadas[1]
+    assert "afuera.txt" in mensajes_reintento[-1].content
+    assert not (tmp_path.parent / "afuera.txt").exists()
+
+
+def test_corregir_build_sin_cambios_devuelve_diagnostico_y_no_escribe(tmp_path):
+    archivos = scaffold_nestjs_minimo(tmp_path)
+    respuesta = correccion_build_json([], diagnostico="falla de red del registry")
+    verificador = Verificador(FakeProvider([respuesta]))
+
+    correccion = verificador.corregir_build(tmp_path, ERROR_BUILD, archivos)
+
+    assert correccion.correcciones == []
+    assert "falla de red" in correccion.diagnostico
+    assert (tmp_path / "Dockerfile").read_text(encoding="utf-8") == "RUN npm ci\n"
+
+
+def test_prompt_del_corrector_incluye_errores_y_scaffold_sin_docs(tmp_path):
+    archivos = scaffold_nestjs_minimo(tmp_path)
+    provider = FakeProvider([correccion_build_json([("Dockerfile", "ok\n")])])
+
+    Verificador(provider).corregir_build(tmp_path, ERROR_BUILD, archivos)
+
+    system_prompt, _ = provider.llamadas[0]
+    assert "npm ci falló" in system_prompt  # el error del build
+    assert "RUN npm ci" in system_prompt  # contenido del Dockerfile
+    assert '{"name": "demo"}' in system_prompt  # contenido del package.json
+    assert "ADR-001" not in system_prompt  # README/docs no gastan contexto
+    assert "[[" not in system_prompt
+
+
+def test_corrector_persistentemente_malformado_escala_sin_escribir(tmp_path):
+    archivos = scaffold_nestjs_minimo(tmp_path)
+    verificador = Verificador(FakeProvider(["basura"] * 3))
+
+    with pytest.raises(ContratoInvalidoError):
+        verificador.corregir_build(tmp_path, ERROR_BUILD, archivos)
+    assert (tmp_path / "Dockerfile").read_text(encoding="utf-8") == "RUN npm ci\n"
 
 
 # --- verificación profunda (Fase 4b) -----------------------------------------
