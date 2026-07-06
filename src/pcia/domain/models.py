@@ -130,12 +130,28 @@ class ResultadoAuditoria(BaseModel):
         return [h for h in self.hallazgos if h.severidad is not Severidad.VERDE]
 
 
+class VerificacionProfunda(BaseModel):
+    """Un chequeo profundo declarado por la plantilla del stack (Fase 4b).
+
+    - ``docker_build``: construye la imagen con el Dockerfile del scaffold.
+    - ``docker_run``: corre ``comando`` dentro de la imagen construida (smoke test).
+    - ``comando``: corre ``comando`` en el host, solo si ``requiere`` está
+      disponible (linters opcionales).
+    """
+
+    id: str
+    tipo: Literal["docker_build", "docker_run", "comando"]
+    comando: list[str] = Field(default_factory=list)
+    requiere: str | None = None
+
+
 class ResultadoConstruccion(BaseModel):
     """Salida del Constructor: qué se generó y dónde."""
 
     stack: str
     raiz: str
     archivos: list[str] = Field(default_factory=list)
+    verificaciones: list[VerificacionProfunda] = Field(default_factory=list)
 
 
 class Chequeo(BaseModel):
@@ -147,12 +163,18 @@ class Chequeo(BaseModel):
 
 
 class ResultadoVerificacion(BaseModel):
-    """Salida del Verificador sobre el proyecto generado."""
+    """Salida del Verificador sobre el proyecto generado.
+
+    ``chequeos`` es la capa de sintaxis (por archivo); ``profundos`` es la
+    capa 4b (builds, smoke tests, linters), donde ``archivo`` lleva el id
+    del chequeo.
+    """
 
     chequeos: list[Chequeo] = Field(default_factory=list)
+    profundos: list[Chequeo] = Field(default_factory=list)
 
     def errores(self) -> list[Chequeo]:
-        return [c for c in self.chequeos if c.estado == "error"]
+        return [c for c in [*self.chequeos, *self.profundos] if c.estado == "error"]
 
     def aprobado(self) -> bool:
         return not self.errores()

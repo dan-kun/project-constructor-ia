@@ -130,3 +130,13 @@ def test_verificacion_con_error_no_aprueba():
     )
     assert not resultado.aprobado()
     assert resultado.errores() == [con_error]
+
+
+def test_verificacion_profunda_con_error_tampoco_aprueba():
+    build_roto = Chequeo(archivo="docker-build", estado="error", detalle="falló el build")
+    resultado = ResultadoVerificacion(
+        chequeos=[Chequeo(archivo="a.py", estado="ok")],
+        profundos=[build_roto, Chequeo(archivo="lint", estado="omitido")],
+    )
+    assert not resultado.aprobado()
+    assert resultado.errores() == [build_roto]
