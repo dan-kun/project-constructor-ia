@@ -90,7 +90,7 @@ def test_ciclo_completo_guarda_spec_y_genera_proyecto(tmp_path):
         ]
     )
     proyecto = tmp_path / "proyecto"
-    entradas = ["una API de facturación en python", str(proyecto)]
+    entradas = ["una API de facturación en python", "", str(proyecto)]
     orq, salidas = crear_orquestador(provider, entradas, tmp_path)
 
     ruta = orq.ejecutar()
@@ -127,7 +127,7 @@ def test_done_prematuro_recibe_feedback_y_continua(tmp_path):
             DOCS_LLM,
         ]
     )
-    orq, _ = crear_orquestador(provider, [str(tmp_path / "proyecto")], tmp_path)
+    orq, _ = crear_orquestador(provider, ["", str(tmp_path / "proyecto")], tmp_path)
 
     ruta = orq.ejecutar()
 
@@ -135,6 +135,29 @@ def test_done_prematuro_recibe_feedback_y_continua(tmp_path):
     # el segundo llamado al LLM incluye la corrección automática del orquestador
     _, mensajes = provider.llamadas[1]
     assert "faltan campos requeridos" in mensajes[-1].content
+
+
+def test_ajuste_en_la_confirmacion_vuelve_al_entrevistador(tmp_path):
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            respuesta_json("Cambié la base a mysql.", {"base_datos": "mysql"}, done=True),
+            SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
+        ]
+    )
+    # en la confirmación pide un ajuste; en la segunda confirma con enter
+    entradas = ["quiero mysql en vez de postgresql", "", str(tmp_path / "proyecto")]
+    orq, _ = crear_orquestador(provider, entradas, tmp_path)
+
+    ruta = orq.ejecutar()
+
+    registro = json.loads(ruta.read_text(encoding="utf-8"))
+    assert registro["spec"]["base_datos"] == "mysql"
+    # el pedido llegó al entrevistador como ajuste explícito
+    _, mensajes = provider.llamadas[1]
+    assert "ajuste antes de cerrar" in mensajes[-1].content
+    assert "mysql" in mensajes[-1].content
 
 
 def test_entrevista_sin_fin_corta_por_limite_de_turnos(tmp_path):
@@ -162,8 +185,8 @@ def test_hallazgo_corregido_via_entrevistador_y_reauditoria(tmp_path):
             DOCS_LLM,
         ]
     )
-    # no asume el riesgo; acepta la corrección propuesta; elige destino
-    entradas = ["n", "", str(tmp_path / "proyecto")]
+    # confirma la spec; no asume el riesgo; acepta la corrección; elige destino
+    entradas = ["", "n", "", str(tmp_path / "proyecto")]
     orq, salidas = crear_orquestador(provider, entradas, tmp_path)
 
     ruta = orq.ejecutar()
@@ -190,7 +213,9 @@ def test_riesgo_asumido_queda_documentado_y_no_bloquea(tmp_path):
             DOCS_LLM,
         ]
     )
-    orq, salidas = crear_orquestador(provider, ["s", str(tmp_path / "proyecto")], tmp_path)
+    orq, salidas = crear_orquestador(
+        provider, ["", "s", str(tmp_path / "proyecto")], tmp_path
+    )
 
     ruta = orq.ejecutar()
 
@@ -214,7 +239,7 @@ def test_coherencia_no_resuelta_escala_tras_el_limite(tmp_path):
             SIN_HALLAZGOS_LLM,  # auditoría 3 (última)
         ]
     )
-    entradas = ["n", "", "n", ""]
+    entradas = ["", "n", "", "n", ""]
     orq, _ = crear_orquestador(provider, entradas, tmp_path)
 
     with pytest.raises(CoherenciaNoResueltaError, match="serverless-websockets"):
@@ -237,7 +262,7 @@ def test_destino_ocupado_reintenta_y_luego_construye(tmp_path):
             DOCS_LLM,
         ]
     )
-    orq, salidas = crear_orquestador(provider, [str(ocupado), str(libre)], tmp_path)
+    orq, salidas = crear_orquestador(provider, ["", str(ocupado), str(libre)], tmp_path)
 
     orq.ejecutar()
 
@@ -257,7 +282,7 @@ def test_destino_siempre_ocupado_escala(tmp_path):
             SIN_HALLAZGOS_LLM,
         ]
     )
-    orq, _ = crear_orquestador(provider, [str(ocupado)] * 3, tmp_path)
+    orq, _ = crear_orquestador(provider, ["", *[str(ocupado)] * 3], tmp_path)
 
     with pytest.raises(DestinoInvalidoError, match="3 intentos"):
         orq.ejecutar()
@@ -290,7 +315,7 @@ def test_verificacion_corrige_archivo_roto_y_entrega(tmp_path, monkeypatch):
         ]
     )
     proyecto = tmp_path / "proyecto"
-    orq, salidas = crear_orquestador(provider, [str(proyecto)], tmp_path)
+    orq, salidas = crear_orquestador(provider, ["", str(proyecto)], tmp_path)
 
     ruta = orq.ejecutar()
 
@@ -317,7 +342,7 @@ def test_verificacion_persistente_entrega_igual_si_el_usuario_acepta(
         ]
     )
     proyecto = tmp_path / "proyecto"
-    orq, salidas = crear_orquestador(provider, [str(proyecto), "s"], tmp_path)
+    orq, salidas = crear_orquestador(provider, ["", str(proyecto), "s"], tmp_path)
 
     ruta = orq.ejecutar()  # no levanta: el usuario aceptó entregar igual
 
@@ -340,7 +365,7 @@ def test_verificacion_persistente_aborta_si_el_usuario_no_acepta(tmp_path, monke
             *[correccion_rota] * 3,
         ]
     )
-    orq, _ = crear_orquestador(provider, [str(tmp_path / "proyecto"), "n"], tmp_path)
+    orq, _ = crear_orquestador(provider, ["", str(tmp_path / "proyecto"), "n"], tmp_path)
 
     with pytest.raises(VerificacionFallidaError, match="config_extra.json"):
         orq.ejecutar()
@@ -379,7 +404,7 @@ def test_verificacion_profunda_ok_entrega_normalmente(tmp_path, monkeypatch):
             DOCS_LLM,
         ]
     )
-    orq, salidas = crear_orquestador(provider, [str(tmp_path / "proyecto")], tmp_path)
+    orq, salidas = crear_orquestador(provider, ["", str(tmp_path / "proyecto")], tmp_path)
 
     ruta = orq.ejecutar()
 
@@ -419,7 +444,7 @@ def test_build_fallido_se_corrige_y_entrega(tmp_path, monkeypatch):
         ]
     )
     proyecto = tmp_path / "proyecto"
-    orq, salidas = crear_orquestador(provider, [str(proyecto)], tmp_path)
+    orq, salidas = crear_orquestador(provider, ["", str(proyecto)], tmp_path)
 
     ruta = orq.ejecutar()  # entrega sin preguntar: la corrección resolvió
 
@@ -448,7 +473,7 @@ def test_correccion_de_build_persistente_agota_ciclos_y_escala(tmp_path, monkeyp
     )
     # tras agotar los ciclos, el usuario decide entregar igual
     orq, salidas = crear_orquestador(
-        provider, [str(tmp_path / "proyecto"), "s"], tmp_path
+        provider, ["", str(tmp_path / "proyecto"), "s"], tmp_path
     )
 
     ruta = orq.ejecutar()
@@ -471,7 +496,7 @@ def test_corrector_sin_cambios_escala_directo_al_usuario(tmp_path, monkeypatch):
             SIN_CAMBIOS_BUILD,  # el corrector diagnostica que no es el scaffold
         ]
     )
-    orq, salidas = crear_orquestador(provider, [str(tmp_path / "proyecto"), "n"], tmp_path)
+    orq, salidas = crear_orquestador(provider, ["", str(tmp_path / "proyecto"), "n"], tmp_path)
 
     with pytest.raises(VerificacionFallidaError, match="docker-build"):
         orq.ejecutar()
@@ -510,7 +535,7 @@ def test_con_docs_analiza_primero_y_precarga_la_entrevista(tmp_path):
         ]
     )
     orq, salidas = crear_orquestador(
-        provider, [str(tmp_path / "proyecto")], tmp_path, docs=[doc]
+        provider, ["", str(tmp_path / "proyecto")], tmp_path, docs=[doc]
     )
 
     ruta = orq.ejecutar()
@@ -534,7 +559,7 @@ def test_sin_docs_no_llama_al_analista(tmp_path):
             DOCS_LLM,
         ]
     )
-    orq, salidas = crear_orquestador(provider, [str(tmp_path / "proyecto")], tmp_path)
+    orq, salidas = crear_orquestador(provider, ["", str(tmp_path / "proyecto")], tmp_path)
 
     orq.ejecutar()
 
@@ -556,7 +581,7 @@ def test_entrevista_arranca_precargada_con_el_historial(tmp_path):
             DOCS_LLM,
         ]
     )
-    orq1, salidas1 = crear_orquestador(provider1, [str(tmp_path / "p1")], tmp_path)
+    orq1, salidas1 = crear_orquestador(provider1, ["", str(tmp_path / "p1")], tmp_path)
     orq1.ejecutar()
     assert any("Preferencias detectadas" in s for s in salidas1)
 
@@ -568,7 +593,7 @@ def test_entrevista_arranca_precargada_con_el_historial(tmp_path):
             DOCS_LLM,
         ]
     )
-    orq2, _ = crear_orquestador(provider2, [str(tmp_path / "p2")], tmp_path)
+    orq2, _ = crear_orquestador(provider2, ["", str(tmp_path / "p2")], tmp_path)
     orq2.ejecutar()
 
     system_prompt, _ = provider2.llamadas[0]

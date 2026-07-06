@@ -32,7 +32,7 @@ from pcia.domain.models import (
 )
 from pcia.domain.ports import LLMProvider
 from pcia.memoria import Memoria
-from pcia.texto import slug_kebab
+from pcia.texto import normalizar, slug_kebab
 
 MAX_TURNOS_ENTREVISTA = 30
 MAX_CICLOS_COHERENCIA = 3
@@ -40,6 +40,9 @@ MAX_INTENTOS_DESTINO = 3
 MAX_CORRECCIONES_POR_ARCHIVO = 3
 # Cada ciclo de corrección profunda implica un rebuild (minutos): límite corto.
 MAX_CORRECCIONES_BUILD = 2
+
+# Respuestas (normalizadas) que confirman la spec al cierre de la entrevista.
+CONFIRMACIONES = ("", "s", "si", "ok", "dale", "listo")
 
 EMOJI_SEMAFORO = {
     Severidad.VERDE: "🟢",
@@ -150,8 +153,21 @@ class Orquestador:
         for _ in range(MAX_TURNOS_ENTREVISTA):
             self._salida(respuesta.message_to_user)
             if respuesta.done and self.spec.esta_completa():
-                return Fase.AUDITORIA
-            if respuesta.done:
+                # Confirmación explícita: el usuario valida la spec antes de
+                # auditar, y su última respuesta siempre tiene quién la lea
+                # (sin esto, un "así está bien" tipeado acá quedaba en el
+                # buffer y lo consumía el próximo input, p. ej. el destino).
+                ajuste = self._entrada(
+                    "¿Confirmás la especificación? "
+                    "(enter = continuar, o escribí qué ajustar) "
+                ).strip()
+                if normalizar(ajuste) in CONFIRMACIONES:
+                    return Fase.AUDITORIA
+                entrada = (
+                    f"El usuario pide un ajuste antes de cerrar: {ajuste}. "
+                    "Aplicalo y volvé a resumir la especificación."
+                )
+            elif respuesta.done:
                 # El modelo cerró antes de tiempo: se lo corrige con feedback.
                 entrada = (
                     "Todavía no podés terminar: faltan campos requeridos "
@@ -243,7 +259,7 @@ class Orquestador:
 
         for _ in range(MAX_INTENTOS_DESTINO):
             crudo = self._entrada(f"¿Dónde genero el proyecto? (enter = {sugerido}) ")
-            destino = Path(crudo.strip() or sugerido).expanduser()
+            destino = Path(crudo.strip() or sugerido).expanduser().resolve()
             try:
                 resultado = constructor.construir(self.spec, destino)
             except DestinoInvalidoError as exc:

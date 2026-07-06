@@ -49,7 +49,7 @@ def test_main_ejecuta_entrevista_completa(tmp_path, monkeypatch, capsys):
         ]
     )
     monkeypatch.setattr(cli, "crear_provider", lambda _config: provider)
-    entradas = iter(["una api de demo", str(tmp_path / "proyecto")])
+    entradas = iter(["una api de demo", "", str(tmp_path / "proyecto")])
     monkeypatch.setattr("builtins.input", lambda *_: next(entradas))
 
     codigo = cli.main(["--config", str(config)])
@@ -92,7 +92,7 @@ def test_main_con_docs_analiza_antes_de_entrevistar(tmp_path, monkeypatch, capsy
         ]
     )
     monkeypatch.setattr(cli, "crear_provider", lambda _config: provider)
-    entradas = iter([str(tmp_path / "proyecto")])
+    entradas = iter(["", str(tmp_path / "proyecto")])
     monkeypatch.setattr("builtins.input", lambda *_: next(entradas))
 
     codigo = cli.main(["--config", str(config), "--docs", str(doc)])
