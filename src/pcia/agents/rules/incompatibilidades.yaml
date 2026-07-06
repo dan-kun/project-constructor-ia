@@ -1,0 +1,111 @@
+# Matriz de incompatibilidades del Agente Auditor (capa determinística).
+#
+# Una regla dispara cuando TODAS sus condiciones matchean (AND).
+# Dentro de una condición alcanza con que ALGÚN campo listado contenga
+# ALGUNA de las palabras clave (OR). El matching es por substring,
+# insensible a mayúsculas y acentos.
+
+reglas:
+  - id: serverless-websockets
+    severidad: rojo
+    mensaje: >-
+      La especificación combina infraestructura serverless con comunicación
+      en tiempo real (WebSockets): las funciones serverless no mantienen
+      conexiones persistentes.
+    correccion: >-
+      Usar un servicio gestionado de tiempo real (API Gateway WebSocket,
+      Pusher, Ably) o pasar a un servidor persistente en contenedores.
+    condiciones:
+      - campos: [infraestructura]
+        contiene: [serverless, lambda, "cloud functions", "azure functions"]
+      - campos: [descripcion, framework, tipo_proyecto, alcance, notas]
+        contiene: [websocket, websockets, "tiempo real", "socket.io", socketio]
+
+  - id: sqlite-alta-concurrencia
+    severidad: rojo
+    mensaje: >-
+      SQLite no soporta alta concurrencia de escritura: serializa las
+      escrituras y degrada con múltiples escritores simultáneos.
+    correccion: >-
+      Usar PostgreSQL o MySQL para cargas con escrituras concurrentes;
+      reservar SQLite para prototipos o datos locales de un solo escritor.
+    condiciones:
+      - campos: [base_datos]
+        contiene: [sqlite]
+      - campos: [descripcion, alcance, notas]
+        contiene:
+          - alta concurrencia
+          - muchos usuarios
+          - alto trafico
+          - alto volumen
+          - escrituras concurrentes
+          - miles de usuarios
+
+  - id: sqlite-serverless
+    severidad: amarillo
+    mensaje: >-
+      SQLite sobre infraestructura serverless es frágil: el filesystem de
+      las funciones es efímero y no se comparte entre instancias.
+    correccion: >-
+      Usar una base gestionada (PostgreSQL/MySQL serverless, DynamoDB) o
+      cambiar la infraestructura a un servidor con disco persistente.
+    condiciones:
+      - campos: [base_datos]
+        contiene: [sqlite]
+      - campos: [infraestructura]
+        contiene: [serverless, lambda, "cloud functions", "azure functions"]
+
+  - id: hexagonal-alcance-minimo
+    severidad: amarillo
+    mensaje: >-
+      Arquitectura hexagonal para un alcance mínimo o descartable puede ser
+      desproporcionada: agrega capas y ceremonia que un prototipo no amortiza.
+    correccion: >-
+      Empezar con una arquitectura en capas simple y evolucionar a hexagonal
+      si el proyecto se consolida; o confirmar que el prototipo crecerá.
+    condiciones:
+      - campos: [arquitectura]
+        contiene: [hexagonal, "puertos y adaptadores", "ports and adapters"]
+      - campos: [alcance]
+        contiene: [prototipo, "prueba de concepto", poc, minimo, descartable]
+
+  - id: microservicios-alcance-chico
+    severidad: amarillo
+    mensaje: >-
+      Microservicios para un alcance chico o un equipo reducido es
+      desproporcionado: multiplica infraestructura, despliegues y fallas
+      distribuidas sin necesidad.
+    correccion: >-
+      Arrancar con un monolito modular bien separado y extraer servicios
+      recién cuando haya límites claros de dominio y equipo para operarlos.
+    condiciones:
+      - campos: [arquitectura]
+        contiene: [microservicio, microservicios]
+      - campos: [alcance]
+        contiene: [prototipo, poc, mvp, "prueba de concepto", minimo, chico, "equipo chico"]
+
+  - id: secretos-hardcodeados
+    severidad: rojo
+    mensaje: >-
+      La gestión de secretos declarada implica secretos hardcodeados en el
+      código o el repositorio: regla no negociable del sistema.
+    correccion: >-
+      Usar variables de entorno como mínimo, e idealmente un gestor de
+      secretos (Vault, AWS Secrets Manager, Doppler).
+    condiciones:
+      - campos: [gestion_secretos]
+        contiene: [hardcode, hardcodeado, hardcodeados, "en el codigo", "en el repo", "en el repositorio"]
+
+  - id: api-sin-autenticacion
+    severidad: amarillo
+    mensaje: >-
+      Una API o aplicación web sin autenticación definida expone todos sus
+      endpoints: seguridad primero, debe decidirse antes de construir.
+    correccion: >-
+      Definir al menos API keys o JWT; si es un servicio interno sin
+      exposición pública, documentarlo explícitamente como riesgo asumido.
+    condiciones:
+      - campos: [tipo_proyecto]
+        contiene: [api, web, backend, servicio]
+      - campos: [autenticacion]
+        contiene: [ninguna, ninguno, "sin autenticacion", "no aplica", "no tiene", "por definir"]
