@@ -4,6 +4,13 @@
 stack: nestjs
 descripcion: API HTTP con NestJS (TypeScript)
 detecta: [nestjs, "nest.js", nest]
+verificaciones:
+  # el build multi-stage corre npm ci + nest build: compila y type-checkea
+  - id: docker-build
+    tipo: docker_build
+  - id: smoke-modulo
+    tipo: docker_run
+    comando: ["node", "-e", "require('./dist/app.module.js')"]
 archivos:
   "package.json": |
     {

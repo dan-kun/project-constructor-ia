@@ -4,6 +4,12 @@
 stack: odoo
 descripcion: Módulo de Odoo (Python)
 detecta: [odoo]
+verificaciones:
+  # sin Dockerfile propio: el módulo se monta en una instancia de Odoo
+  - id: lint-ruff
+    tipo: comando
+    requiere: ruff
+    comando: ["ruff", "check", "."]
 archivos:
   "__init__.py": |
     from . import models

@@ -4,6 +4,16 @@
 stack: fastapi
 descripcion: API HTTP con FastAPI (Python)
 detecta: [fastapi, "fast api"]
+verificaciones:
+  - id: docker-build
+    tipo: docker_build
+  - id: smoke-import-app
+    tipo: docker_run
+    comando: ["python", "-c", "import [[PAQUETE]].main"]
+  - id: lint-ruff
+    tipo: comando
+    requiere: ruff
+    comando: ["ruff", "check", "src", "tests"]
 archivos:
   "pyproject.toml": |
     [build-system]

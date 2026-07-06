@@ -22,7 +22,11 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from pcia.agents.llm_json import consultar_con_contrato
-from pcia.domain.models import ProjectSpec, ResultadoConstruccion
+from pcia.domain.models import (
+    ProjectSpec,
+    ResultadoConstruccion,
+    VerificacionProfunda,
+)
 from pcia.domain.ports import ChatMessage, LLMProvider
 from pcia.texto import normalizar, slug_kebab, slug_snake
 
@@ -52,6 +56,7 @@ class Plantilla(BaseModel):
     descripcion: str = ""
     detecta: list[str] = Field(min_length=1)
     archivos: dict[str, str] = Field(min_length=1)
+    verificaciones: list[VerificacionProfunda] = Field(default_factory=list)
 
 
 class DocsGeneradas(BaseModel):
@@ -76,6 +81,12 @@ def cargar_plantillas(directorio: Path = RUTA_TEMPLATES) -> list[Plantilla]:
                 raise ValueError(
                     f"Plantilla '{plantilla.stack}': ruta insegura {relativa!r}"
                 )
+        for verificacion in plantilla.verificaciones:
+            if verificacion.tipo != "docker_build" and not verificacion.comando:
+                raise ValueError(
+                    f"Plantilla '{plantilla.stack}': la verificación "
+                    f"'{verificacion.id}' ({verificacion.tipo}) necesita un comando"
+                )
         plantillas.append(plantilla)
     if not plantillas:
         raise ValueError(f"No hay plantillas en {directorio}")
@@ -96,7 +107,7 @@ class Constructor:
         plantilla = self._seleccionar(spec)
         _validar_destino(destino)
 
-        archivos = _renderizar(plantilla, spec)
+        archivos, verificaciones = _renderizar(plantilla, spec)
         docs = self._generar_docs(spec, plantilla, sorted(archivos))
         archivos["README.md"] = docs.readme_markdown
         archivos[RUTA_ADR] = docs.adr_markdown
@@ -107,7 +118,10 @@ class Constructor:
             ruta.write_text(contenido, encoding="utf-8")
 
         return ResultadoConstruccion(
-            stack=plantilla.stack, raiz=str(destino), archivos=sorted(archivos)
+            stack=plantilla.stack,
+            raiz=str(destino),
+            archivos=sorted(archivos),
+            verificaciones=verificaciones,
         )
 
     def _seleccionar(self, spec: ProjectSpec) -> Plantilla:
@@ -154,7 +168,9 @@ class Constructor:
         return docs
 
 
-def _renderizar(plantilla: Plantilla, spec: ProjectSpec) -> dict[str, str]:
+def _renderizar(
+    plantilla: Plantilla, spec: ProjectSpec
+) -> tuple[dict[str, str], list[VerificacionProfunda]]:
     nombre = spec.nombre or "proyecto"
     tokens = {
         "[[NOMBRE]]": nombre,
@@ -174,7 +190,16 @@ def _renderizar(plantilla: Plantilla, spec: ProjectSpec) -> dict[str, str]:
             )
         return texto
 
-    return {render(ruta): render(contenido) for ruta, contenido in plantilla.archivos.items()}
+    archivos = {
+        render(ruta): render(contenido) for ruta, contenido in plantilla.archivos.items()
+    }
+    verificaciones = [
+        verificacion.model_copy(
+            update={"comando": [render(parte) for parte in verificacion.comando]}
+        )
+        for verificacion in plantilla.verificaciones
+    ]
+    return archivos, verificaciones
 
 
 def _validar_destino(destino: Path) -> None:

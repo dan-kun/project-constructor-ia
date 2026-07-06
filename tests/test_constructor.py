@@ -151,6 +151,32 @@ def test_las_plantillas_del_paquete_cargan_y_validan():
     assert {p.stack for p in plantillas} == {"fastapi", "nestjs", "odoo"}
 
 
+def test_resultado_incluye_verificaciones_renderizadas(tmp_path):
+    resultado, _ = construir(spec_para("fastapi"), tmp_path / "proyecto")
+
+    por_id = {v.id: v for v in resultado.verificaciones}
+    assert por_id["docker-build"].tipo == "docker_build"
+    # el token [[PAQUETE]] del smoke test quedó renderizado
+    assert por_id["smoke-import-app"].comando == ["python", "-c", "import mi_api.main"]
+    assert por_id["lint-ruff"].requiere == "ruff"
+
+
+def test_verificacion_sin_comando_falla_temprano(tmp_path):
+    ruta = tmp_path / "mala.yaml"
+    ruta.write_text(
+        "stack: mala\n"
+        "detecta: [mala]\n"
+        "verificaciones:\n"
+        "  - id: sin-comando\n"
+        "    tipo: comando\n"
+        "archivos:\n"
+        '  "a.txt": contenido\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="necesita un comando"):
+        cargar_plantillas(tmp_path)
+
+
 def test_plantilla_con_ruta_insegura_falla_temprano(tmp_path):
     ruta = tmp_path / "mala.yaml"
     ruta.write_text(
