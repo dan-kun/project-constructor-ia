@@ -347,7 +347,11 @@ def test_verificacion_persistente_aborta_si_el_usuario_no_acepta(tmp_path, monke
 
 
 def simular_docker(monkeypatch, codigos):
-    """Habilita docker/ruff falsos con resultados programados por comando."""
+    """Habilita docker/ruff falsos con resultados programados por comando.
+
+    Un valor lista se consume en orden (ej.: ``[1, 0]`` = falla la primera
+    vez y pasa la segunda), útil para el ciclo de corrección de builds.
+    """
     import subprocess
 
     from pcia.agents import verificador as modulo_verificador
@@ -357,6 +361,8 @@ def simular_docker(monkeypatch, codigos):
     def ejecutar(comando, cwd, timeout):
         comandos.append(list(comando))
         codigo = codigos.get(" ".join(comando[:2]), 0)
+        if isinstance(codigo, list):
+            codigo = codigo.pop(0) if codigo else 0
         return subprocess.CompletedProcess(comando, codigo, stdout="", stderr="build roto")
 
     monkeypatch.setattr(modulo_verificador, "_binario_disponible", lambda _: True)
@@ -386,42 +392,92 @@ def test_verificacion_profunda_ok_entrega_normalmente(tmp_path, monkeypatch):
     assert any("Verificación profunda" in s for s in salidas)
 
 
-def test_build_docker_fallido_escala_y_el_usuario_decide(tmp_path, monkeypatch):
-    simular_docker(monkeypatch, codigos={"docker build": 1})
+CORRECCION_BUILD = json.dumps(
+    {
+        "diagnostico": "npm ci requiere lockfile; se reemplaza por npm install",
+        "correcciones": [
+            {"archivo": "Dockerfile", "contenido_corregido": "FROM python:3.12-slim\n"}
+        ],
+    },
+    ensure_ascii=False,
+)
+SIN_CAMBIOS_BUILD = json.dumps(
+    {"diagnostico": "es una falla del entorno, no del scaffold", "correcciones": []},
+    ensure_ascii=False,
+)
+
+
+def test_build_fallido_se_corrige_y_entrega(tmp_path, monkeypatch):
+    # el build falla la primera vez y pasa tras la corrección (Fase 7)
+    simular_docker(monkeypatch, codigos={"docker build": [1, 0]})
     provider = FakeProvider(
         [
             respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
             SIN_HALLAZGOS_LLM,
             DOCS_LLM,
+            CORRECCION_BUILD,
         ]
     )
-    # el build falla; el usuario decide entregar igual
+    proyecto = tmp_path / "proyecto"
+    orq, salidas = crear_orquestador(provider, [str(proyecto)], tmp_path)
+
+    ruta = orq.ejecutar()  # entrega sin preguntar: la corrección resolvió
+
+    dockerfile = (proyecto / "Dockerfile").read_text(encoding="utf-8")
+    assert dockerfile == "FROM python:3.12-slim\n"
+    assert any("Diagnóstico: npm ci requiere lockfile" in s for s in salidas)
+    assert any("el defecto puede estar en la plantilla" in s for s in salidas)
+    registro = json.loads(ruta.read_text(encoding="utf-8"))
+    assert registro["correcciones_build"] == [
+        "npm ci requiere lockfile; se reemplaza por npm install"
+    ]
+    estados = {c["archivo"]: c["estado"] for c in registro["verificacion"]["profundos"]}
+    assert estados["docker-build"] == "ok"
+
+
+def test_correccion_de_build_persistente_agota_ciclos_y_escala(tmp_path, monkeypatch):
+    simular_docker(monkeypatch, codigos={"docker build": 1})  # falla siempre
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
+            CORRECCION_BUILD,  # intento 1: no alcanza
+            CORRECCION_BUILD,  # intento 2: tampoco
+        ]
+    )
+    # tras agotar los ciclos, el usuario decide entregar igual
     orq, salidas = crear_orquestador(
         provider, [str(tmp_path / "proyecto"), "s"], tmp_path
     )
 
     ruta = orq.ejecutar()
 
+    assert sum("Corrigiendo fallas de la verificación profunda" in s for s in salidas) == 2
+    assert any("Entrega con errores" in s for s in salidas)
     registro = json.loads(ruta.read_text(encoding="utf-8"))
+    assert len(registro["correcciones_build"]) == 2
     estados = {c["archivo"]: c["estado"] for c in registro["verificacion"]["profundos"]}
     assert estados["docker-build"] == "error"
-    assert estados["smoke-import-app"] == "omitido"  # sin imagen no hay smoke
-    assert any("Entrega con errores" in s for s in salidas)
 
 
-def test_build_docker_fallido_aborta_si_el_usuario_no_acepta(tmp_path, monkeypatch):
+def test_corrector_sin_cambios_escala_directo_al_usuario(tmp_path, monkeypatch):
     simular_docker(monkeypatch, codigos={"docker build": 1})
     provider = FakeProvider(
         [
             respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
             SIN_HALLAZGOS_LLM,
             DOCS_LLM,
+            SIN_CAMBIOS_BUILD,  # el corrector diagnostica que no es el scaffold
         ]
     )
-    orq, _ = crear_orquestador(provider, [str(tmp_path / "proyecto"), "n"], tmp_path)
+    orq, salidas = crear_orquestador(provider, [str(tmp_path / "proyecto"), "n"], tmp_path)
 
     with pytest.raises(VerificacionFallidaError, match="docker-build"):
         orq.ejecutar()
+    assert any("no propuso cambios" in s for s in salidas)
+    # un solo intento de corrección: sin propuesta no se insiste
+    assert sum("Corrigiendo fallas" in s for s in salidas) == 1
 
 
 # --- fase de análisis de documentos ---------------------------------------------

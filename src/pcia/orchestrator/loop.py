@@ -17,6 +17,7 @@ from pcia.agents.aprendizaje import Aprendizaje
 from pcia.agents.auditor import Auditor
 from pcia.agents.constructor import Constructor, DestinoInvalidoError
 from pcia.agents.interviewer import Entrevistador
+from pcia.agents.llm_json import ContratoInvalidoError
 from pcia.agents.verificador import Verificador
 from pcia.domain.models import (
     Chequeo,
@@ -37,6 +38,8 @@ MAX_TURNOS_ENTREVISTA = 30
 MAX_CICLOS_COHERENCIA = 3
 MAX_INTENTOS_DESTINO = 3
 MAX_CORRECCIONES_POR_ARCHIVO = 3
+# Cada ciclo de corrección profunda implica un rebuild (minutos): límite corto.
+MAX_CORRECCIONES_BUILD = 2
 
 EMOJI_SEMAFORO = {
     Severidad.VERDE: "🟢",
@@ -92,6 +95,7 @@ class Orquestador:
         self.ruta_spec: Path | None = None
         self.ruta_proyecto: Path | None = None
         self.resoluciones: list[ResolucionHallazgo] = []
+        self.correcciones_build: list[str] = []
         self._construccion: ResultadoConstruccion | None = None
         self._verificacion: ResultadoVerificacion | None = None
         self._memoria = Memoria(self._memory_dir)
@@ -264,8 +268,9 @@ class Orquestador:
         Capa de sintaxis: ante una falla, informar + corregir (LLM) +
         re-verificar, con máximo de 3 reintentos por archivo. Con la
         sintaxis en verde corre la capa profunda (builds en Docker, smoke
-        tests, linters); sus fallas no se corrigen automáticamente. En
-        ambos casos, si algo sigue fallando se escala al usuario.
+        tests, linters); sus fallas pasan por el corrector de builds
+        (Fase 7, multi-archivo, ciclo acotado). En ambos casos, si algo
+        sigue fallando se escala al usuario.
         """
         assert self.ruta_proyecto is not None
         raiz = self.ruta_proyecto
@@ -298,10 +303,13 @@ class Orquestador:
             profundos = verificador.verificar_profundo(
                 raiz, self._construccion.verificaciones, etiqueta
             )
+            self._salida(_formatear_profundos(profundos))
+            profundos = self._corregir_fallas_profundas(
+                verificador, raiz, etiqueta, profundos
+            )
             resultado = ResultadoVerificacion(
                 chequeos=resultado.chequeos, profundos=profundos
             )
-            self._salida(_formatear_profundos(profundos))
 
         self._verificacion = resultado
         if resultado.aprobado():
@@ -319,6 +327,54 @@ class Orquestador:
             + ", ".join(c.archivo for c in resultado.errores())
         )
 
+    def _corregir_fallas_profundas(
+        self,
+        verificador: Verificador,
+        raiz: Path,
+        etiqueta: str,
+        profundos: list[Chequeo],
+    ) -> list[Chequeo]:
+        """Ciclo de corrección de la capa profunda (Fase 7), acotado.
+
+        Best-effort: si el corrector no propone cambios (diagnóstico
+        "no se resuelve tocando el scaffold") o no cumple el contrato,
+        se corta el ciclo y decide el usuario, como antes de la Fase 7.
+        """
+        assert self._construccion is not None
+        for intento in range(1, MAX_CORRECCIONES_BUILD + 1):
+            errores = [c for c in profundos if c.estado == "error"]
+            if not errores:
+                return profundos
+            self._salida(
+                "Corrigiendo fallas de la verificación profunda "
+                f"(intento {intento}/{MAX_CORRECCIONES_BUILD})…"
+            )
+            try:
+                correccion = verificador.corregir_build(
+                    raiz, errores, self._construccion.archivos
+                )
+            except ContratoInvalidoError as exc:
+                self._salida(f"El corrector no produjo una corrección válida: {exc}")
+                return profundos
+            if not correccion.correcciones:
+                self._salida(
+                    f"El corrector no propuso cambios: {correccion.diagnostico}"
+                )
+                return profundos
+            self.correcciones_build.append(correccion.diagnostico)
+            archivos = ", ".join(c.archivo for c in correccion.correcciones)
+            self._salida(
+                f"Diagnóstico: {correccion.diagnostico}\n"
+                f"Archivos corregidos: {archivos}\n"
+                f"(si esta corrección se repite en otros proyectos "
+                f"'{self._construccion.stack}', el defecto puede estar en la plantilla)"
+            )
+            profundos = verificador.verificar_profundo(
+                raiz, self._construccion.verificaciones, etiqueta
+            )
+            self._salida(_formatear_profundos(profundos))
+        return profundos
+
     def _fase_entrega(self) -> Fase:
         registro = RegistroProyecto(
             fecha=dt.datetime.now().isoformat(timespec="seconds"),
@@ -327,6 +383,7 @@ class Orquestador:
             ruta_proyecto=str(self.ruta_proyecto) if self.ruta_proyecto else None,
             resoluciones=self.resoluciones,
             verificacion=self._verificacion,
+            correcciones_build=self.correcciones_build,
         )
         self.ruta_spec = self._memoria.guardar(registro)
         self._salida(f"Especificación y registro del proyecto guardados en {self.ruta_spec}")
