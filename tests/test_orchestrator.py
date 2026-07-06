@@ -18,6 +18,25 @@ SIN_HALLAZGOS_LLM = '{"hallazgos": []}'
 DOCS_LLM = json.dumps({"readme_markdown": "# mi api\n", "adr_markdown": "# ADR-001\n"})
 
 
+@pytest.fixture(autouse=True)
+def sin_herramientas_externas(monkeypatch):
+    """Los tests de flujo no deben tocar Docker ni linters reales.
+
+    Sin binarios disponibles, toda la capa profunda se reporta 'omitido'.
+    Los tests que simulan la capa profunda pisan estos parches.
+    """
+    from pcia.agents import verificador as modulo_verificador
+
+    monkeypatch.setattr(modulo_verificador, "_binario_disponible", lambda _: False)
+    monkeypatch.setattr(
+        modulo_verificador,
+        "_ejecutar",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no debería ejecutarse ningún comando externo")
+        ),
+    )
+
+
 def respuesta_json(mensaje="ok", updates=None, done=False) -> str:
     return json.dumps(
         {"message_to_user": mensaje, "updates": updates or {}, "done": done},
@@ -91,6 +110,9 @@ def test_ciclo_completo_guarda_spec_y_genera_proyecto(tmp_path):
     assert any("🟢" in s for s in salidas)  # semáforo verde reportado
     assert any("Proyecto generado" in s for s in salidas)
     assert any("Verificación de sintaxis" in s for s in salidas)
+    # capa profunda: sin docker/linters en el entorno de test, todo omitido
+    assert any("docker no está disponible" in s for s in salidas)
+    assert registro["verificacion"]["profundos"]
     assert any("Especificación y registro" in s for s in salidas)
     assert any("Memoria actualizada" in s for s in salidas)
 
@@ -320,6 +342,84 @@ def test_verificacion_persistente_aborta_si_el_usuario_no_acepta(tmp_path, monke
     orq, _ = crear_orquestador(provider, [str(tmp_path / "proyecto"), "n"], tmp_path)
 
     with pytest.raises(VerificacionFallidaError, match="config_extra.json"):
+        orq.ejecutar()
+
+
+def simular_docker(monkeypatch, codigos):
+    """Habilita docker/ruff falsos con resultados programados por comando."""
+    import subprocess
+
+    from pcia.agents import verificador as modulo_verificador
+
+    comandos = []
+
+    def ejecutar(comando, cwd, timeout):
+        comandos.append(list(comando))
+        codigo = codigos.get(" ".join(comando[:2]), 0)
+        return subprocess.CompletedProcess(comando, codigo, stdout="", stderr="build roto")
+
+    monkeypatch.setattr(modulo_verificador, "_binario_disponible", lambda _: True)
+    monkeypatch.setattr(modulo_verificador, "_ejecutar", ejecutar)
+    return comandos
+
+
+def test_verificacion_profunda_ok_entrega_normalmente(tmp_path, monkeypatch):
+    comandos = simular_docker(monkeypatch, codigos={})
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
+        ]
+    )
+    orq, salidas = crear_orquestador(provider, [str(tmp_path / "proyecto")], tmp_path)
+
+    ruta = orq.ejecutar()
+
+    assert ["docker", "build"] in [c[:2] for c in comandos]
+    assert ["docker", "run"] in [c[:2] for c in comandos]
+    registro = json.loads(ruta.read_text(encoding="utf-8"))
+    estados = {c["archivo"]: c["estado"] for c in registro["verificacion"]["profundos"]}
+    assert estados["docker-build"] == "ok"
+    assert estados["smoke-import-app"] == "ok"
+    assert any("Verificación profunda" in s for s in salidas)
+
+
+def test_build_docker_fallido_escala_y_el_usuario_decide(tmp_path, monkeypatch):
+    simular_docker(monkeypatch, codigos={"docker build": 1})
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
+        ]
+    )
+    # el build falla; el usuario decide entregar igual
+    orq, salidas = crear_orquestador(
+        provider, [str(tmp_path / "proyecto"), "s"], tmp_path
+    )
+
+    ruta = orq.ejecutar()
+
+    registro = json.loads(ruta.read_text(encoding="utf-8"))
+    estados = {c["archivo"]: c["estado"] for c in registro["verificacion"]["profundos"]}
+    assert estados["docker-build"] == "error"
+    assert estados["smoke-import-app"] == "omitido"  # sin imagen no hay smoke
+    assert any("Entrega con errores" in s for s in salidas)
+
+
+def test_build_docker_fallido_aborta_si_el_usuario_no_acepta(tmp_path, monkeypatch):
+    simular_docker(monkeypatch, codigos={"docker build": 1})
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
+        ]
+    )
+    orq, _ = crear_orquestador(provider, [str(tmp_path / "proyecto"), "n"], tmp_path)
+
+    with pytest.raises(VerificacionFallidaError, match="docker-build"):
         orq.ejecutar()
 
 

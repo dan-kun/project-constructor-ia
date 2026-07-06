@@ -17,6 +17,7 @@ from pcia.agents.constructor import Constructor, DestinoInvalidoError
 from pcia.agents.interviewer import Entrevistador
 from pcia.agents.verificador import Verificador
 from pcia.domain.models import (
+    Chequeo,
     Hallazgo,
     ProjectSpec,
     RegistroProyecto,
@@ -237,8 +238,11 @@ class Orquestador:
     def _fase_verificacion(self) -> Fase:
         """Ciclo de corrección (Verificación → Construcción), acotado.
 
-        Ante una falla: informar + corregir (LLM) + re-verificar, con máximo
-        de 3 reintentos por archivo; si sigue fallando se escala al usuario.
+        Capa de sintaxis: ante una falla, informar + corregir (LLM) +
+        re-verificar, con máximo de 3 reintentos por archivo. Con la
+        sintaxis en verde corre la capa profunda (builds en Docker, smoke
+        tests, linters); sus fallas no se corrigen automáticamente. En
+        ambos casos, si algo sigue fallando se escala al usuario.
         """
         assert self.ruta_proyecto is not None
         raiz = self.ruta_proyecto
@@ -260,6 +264,21 @@ class Orquestador:
                         break
             resultado = verificador.verificar(raiz)
             self._salida(_formatear_verificacion(resultado))
+
+        if (
+            resultado.aprobado()
+            and self._construccion is not None
+            and self._construccion.verificaciones
+        ):
+            self._salida("Verificación profunda (builds, smoke tests y linters)…")
+            etiqueta = f"pcia-verif-{slug_kebab(self.spec.nombre or 'proyecto')}"
+            profundos = verificador.verificar_profundo(
+                raiz, self._construccion.verificaciones, etiqueta
+            )
+            resultado = ResultadoVerificacion(
+                chequeos=resultado.chequeos, profundos=profundos
+            )
+            self._salida(_formatear_profundos(profundos))
 
         self._verificacion = resultado
         if resultado.aprobado():
@@ -322,7 +341,7 @@ def _formatear_reporte(resultado: ResultadoAuditoria) -> str:
 def _formatear_verificacion(resultado: ResultadoVerificacion) -> str:
     ok = sum(1 for c in resultado.chequeos if c.estado == "ok")
     omitidos = sum(1 for c in resultado.chequeos if c.estado == "omitido")
-    errores = resultado.errores()
+    errores = [c for c in resultado.chequeos if c.estado == "error"]
     lineas = [
         f"Verificación de sintaxis: {ok} ok, {len(errores)} con errores, "
         f"{omitidos} sin verificador."
@@ -331,4 +350,15 @@ def _formatear_verificacion(resultado: ResultadoVerificacion) -> str:
         lineas.append(f"❌ {chequeo.archivo}: {chequeo.detalle}")
     if not errores:
         lineas.append("✅ Todos los archivos verificables son válidos.")
+    return "\n".join(lineas)
+
+
+def _formatear_profundos(profundos: list[Chequeo]) -> str:
+    iconos = {"ok": "✅", "error": "❌", "omitido": "⏭️"}
+    lineas = ["Resultado de la verificación profunda:"]
+    for chequeo in profundos:
+        linea = f"{iconos[chequeo.estado]} [{chequeo.archivo}] {chequeo.estado}"
+        if chequeo.detalle:
+            linea += f" — {chequeo.detalle}"
+        lineas.append(linea)
     return "\n".join(lineas)

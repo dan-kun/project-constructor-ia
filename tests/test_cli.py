@@ -2,8 +2,18 @@
 
 import json
 
+import pytest
+
 from conftest import FakeProvider
 from pcia import cli
+
+
+@pytest.fixture(autouse=True)
+def sin_herramientas_externas(monkeypatch):
+    """El flujo completo no debe tocar Docker ni linters reales."""
+    from pcia.agents import verificador as modulo_verificador
+
+    monkeypatch.setattr(modulo_verificador, "_binario_disponible", lambda _: False)
 
 UPDATES_COMPLETOS = {
     "nombre": "demo",
