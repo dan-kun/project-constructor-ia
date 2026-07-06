@@ -57,8 +57,9 @@ docs/              # DISENO.md (diseño completo y roadmap)
 - [x] Fase 1: puerto `LLMProvider` + 3 adaptadores + `ProjectSpec` + Entrevistador + loop del orquestador
 - [x] Fase 2: Agente Auditor (matriz de reglas + validación LLM, semáforo de coherencia)
 - [x] Fase 3: Agente Constructor (plantillas: FastAPI, módulo Odoo, NestJS)
-- [ ] **Fase 4 (SIGUIENTE)**: Agente Verificador (sintaxis primero; builds en Docker después)
-- [ ] Fase 5: Memoria persistente y Agente de Aprendizaje
+- [x] Fase 4a: Agente Verificador de sintaxis + ciclo de corrección acotado
+- [x] Fase 5: Memoria persistente (RegistroProyecto en `memory/`) y Agente de Aprendizaje (precarga de entrevista)
+- [ ] **Fase 4b (SIGUIENTE)**: builds en Docker, linters y smoke tests en el Verificador
 
 ## Comandos
 
