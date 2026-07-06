@@ -6,7 +6,8 @@ los agentes no se comunican entre sí, solo leen y actualizan la spec.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from enum import Enum
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -34,6 +35,7 @@ class ProjectSpec(BaseModel):
     ci_cd: str | None = None
     alcance: str | None = None
     notas: list[str] = Field(default_factory=list)
+    riesgos_asumidos: list[str] = Field(default_factory=list)
 
     CAMPOS_REQUERIDOS: ClassVar[tuple[str, ...]] = (
         "nombre",
@@ -76,8 +78,8 @@ class ProjectSpec(BaseModel):
 
         candidato = self.model_copy(deep=True)
         for clave, valor in updates.items():
-            if clave == "notas" and isinstance(valor, str):
-                valor = [*candidato.notas, valor]
+            if clave in ("notas", "riesgos_asumidos") and isinstance(valor, str):
+                valor = [*getattr(candidato, clave), valor]
             try:
                 setattr(candidato, clave, valor)
             except ValidationError as exc:
@@ -87,3 +89,42 @@ class ProjectSpec(BaseModel):
 
         for clave in updates:
             object.__setattr__(self, clave, getattr(candidato, clave))
+
+
+class Severidad(str, Enum):
+    """Semáforo de coherencia del Auditor."""
+
+    VERDE = "verde"
+    AMARILLO = "amarillo"
+    ROJO = "rojo"
+
+    @property
+    def peso(self) -> int:
+        return {"verde": 0, "amarillo": 1, "rojo": 2}[self.value]
+
+
+class Hallazgo(BaseModel):
+    """Una incongruencia (o observación) detectada por el Auditor."""
+
+    id: str
+    severidad: Severidad
+    mensaje: str
+    correccion_propuesta: str = ""
+    origen: Literal["regla", "llm"]
+
+
+class ResultadoAuditoria(BaseModel):
+    """Salida del Auditor: hallazgos combinados de reglas y pase LLM."""
+
+    hallazgos: list[Hallazgo] = Field(default_factory=list)
+
+    def semaforo(self) -> Severidad:
+        return max(
+            (h.severidad for h in self.hallazgos),
+            key=lambda s: s.peso,
+            default=Severidad.VERDE,
+        )
+
+    def pendientes(self) -> list[Hallazgo]:
+        """Hallazgos que bloquean la construcción (todo lo no-verde)."""
+        return [h for h in self.hallazgos if h.severidad is not Severidad.VERDE]

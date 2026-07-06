@@ -1,8 +1,8 @@
-"""Tests del modelo ProjectSpec."""
+"""Tests de los modelos de dominio."""
 
 import pytest
 
-from pcia.domain.models import ProjectSpec
+from pcia.domain.models import Hallazgo, ProjectSpec, ResultadoAuditoria, Severidad
 
 UPDATES_COMPLETOS = {
     "nombre": "mi-api",
@@ -68,3 +68,38 @@ def test_notas_no_es_campo_requerido():
     spec.aplicar_updates(UPDATES_COMPLETOS)
     assert spec.notas == []
     assert spec.esta_completa()
+
+
+def test_riesgos_asumidos_acepta_string_y_no_es_requerido():
+    spec = ProjectSpec()
+    spec.aplicar_updates({"riesgos_asumidos": "sqlite-alta-concurrencia: asumido"})
+    assert spec.riesgos_asumidos == ["sqlite-alta-concurrencia: asumido"]
+    assert "riesgos_asumidos" not in ProjectSpec.CAMPOS_REQUERIDOS
+
+
+def hallazgo(id_, severidad):
+    return Hallazgo(id=id_, severidad=severidad, mensaje="m", origen="regla")
+
+
+def test_semaforo_sin_hallazgos_es_verde():
+    resultado = ResultadoAuditoria()
+    assert resultado.semaforo() is Severidad.VERDE
+    assert resultado.pendientes() == []
+
+
+def test_semaforo_devuelve_la_peor_severidad():
+    resultado = ResultadoAuditoria(
+        hallazgos=[
+            hallazgo("a", Severidad.VERDE),
+            hallazgo("b", Severidad.ROJO),
+            hallazgo("c", Severidad.AMARILLO),
+        ]
+    )
+    assert resultado.semaforo() is Severidad.ROJO
+
+
+def test_pendientes_excluye_los_verdes():
+    resultado = ResultadoAuditoria(
+        hallazgos=[hallazgo("a", Severidad.VERDE), hallazgo("b", Severidad.AMARILLO)]
+    )
+    assert [h.id for h in resultado.pendientes()] == ["b"]
