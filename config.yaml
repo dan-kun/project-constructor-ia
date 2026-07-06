@@ -1,0 +1,22 @@
+# Project Constructor IA - Configuración
+# El proveedor de IA es intercambiable: cambiar aquí no requiere tocar el código.
+
+provider: openai_compat   # anthropic_api | openai_compat | claude_subscription
+
+anthropic_api:
+  model: claude-sonnet-4-6
+  max_tokens: 2000
+  # Requiere variable de entorno ANTHROPIC_API_KEY
+
+openai_compat:
+  # Sirve para Ollama local, LM Studio, Groq, OpenRouter, etc.
+  base_url: http://localhost:11434/v1   # Ollama por defecto
+  model: qwen2.5:14b
+  api_key: ollama   # Ollama ignora la key; otros proveedores la requieren
+
+claude_subscription:
+  # Usa la CLI de Claude Code en modo headless (claude -p), autenticada con tu suscripción Pro/Max.
+  # Requiere tener claude instalado y haber iniciado sesión.
+  model: null   # null = modelo por defecto de tu Claude Code
+
+memory_dir: memory
