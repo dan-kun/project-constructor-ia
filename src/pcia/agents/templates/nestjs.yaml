@@ -5,7 +5,7 @@ stack: nestjs
 descripcion: API HTTP con NestJS (TypeScript)
 detecta: [nestjs, "nest.js", nest]
 verificaciones:
-  # el build multi-stage corre npm ci + nest build: compila y type-checkea
+  # el build multi-stage corre npm install + nest build: compila y type-checkea
   - id: docker-build
     tipo: docker_build
   - id: smoke-modulo
@@ -88,7 +88,8 @@ archivos:
     FROM node:20-alpine AS build
     WORKDIR /app
     COPY package*.json ./
-    RUN npm ci
+    # npm install (no `npm ci`): el scaffold no incluye package-lock.json
+    RUN npm install
     COPY . .
     RUN npm run build
 
@@ -171,6 +172,6 @@ archivos:
           - uses: actions/setup-node@v4
             with:
               node-version: "20"
-          - run: npm ci
+          - run: npm install
           - run: npm run build
           - run: npm test
