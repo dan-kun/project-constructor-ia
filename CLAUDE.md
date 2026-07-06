@@ -56,8 +56,8 @@ docs/              # DISENO.md (diseño completo y roadmap)
 - [x] Scaffold, config.yaml, pyproject.toml
 - [x] Fase 1: puerto `LLMProvider` + 3 adaptadores + `ProjectSpec` + Entrevistador + loop del orquestador
 - [x] Fase 2: Agente Auditor (matriz de reglas + validación LLM, semáforo de coherencia)
-- [ ] **Fase 3 (SIGUIENTE)**: Agente Constructor (plantillas: FastAPI, módulo Odoo, NestJS)
-- [ ] Fase 4: Agente Verificador (sintaxis primero; builds en Docker después)
+- [x] Fase 3: Agente Constructor (plantillas: FastAPI, módulo Odoo, NestJS)
+- [ ] **Fase 4 (SIGUIENTE)**: Agente Verificador (sintaxis primero; builds en Docker después)
 - [ ] Fase 5: Memoria persistente y Agente de Aprendizaje
 
 ## Comandos
