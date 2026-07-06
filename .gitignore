@@ -8,3 +8,5 @@ build/
 *.egg-info/
 .pytest_cache/
 memory/*.json
+# configs locales por proveedor (pueden contener API keys)
+config.*.yaml
