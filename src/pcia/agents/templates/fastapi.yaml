@@ -1,0 +1,102 @@
+# Plantilla de scaffold: API HTTP con FastAPI (Python).
+# Tokens disponibles: [[NOMBRE]], [[NOMBRE_KEBAB]], [[PAQUETE]], [[DESCRIPCION]]
+
+stack: fastapi
+descripcion: API HTTP con FastAPI (Python)
+detecta: [fastapi, "fast api"]
+archivos:
+  "pyproject.toml": |
+    [build-system]
+    requires = ["setuptools>=68"]
+    build-backend = "setuptools.build_meta"
+
+    [project]
+    name = "[[NOMBRE_KEBAB]]"
+    version = "0.1.0"
+    description = "[[DESCRIPCION]]"
+    requires-python = ">=3.10"
+    dependencies = [
+        "fastapi>=0.110",
+        "uvicorn[standard]>=0.29",
+        "pydantic-settings>=2.2",
+    ]
+
+    [project.optional-dependencies]
+    dev = ["pytest>=8.0", "httpx>=0.27"]
+
+    [tool.setuptools.packages.find]
+    where = ["src"]
+
+  ".gitignore": |
+    __pycache__/
+    *.py[cod]
+    .venv/
+    .env
+    dist/
+    .pytest_cache/
+
+  ".env.example": |
+    # Copiar a .env y completar. Nunca commitear secretos reales.
+    APP_ENV=dev
+    SECRET_KEY=cambiar-por-un-secreto-real
+
+  "Dockerfile": |
+    FROM python:3.12-slim
+    WORKDIR /app
+    COPY pyproject.toml ./
+    COPY src/ src/
+    RUN pip install --no-cache-dir .
+    EXPOSE 8000
+    CMD ["uvicorn", "[[PAQUETE]].main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  "src/[[PAQUETE]]/__init__.py": ""
+
+  "src/[[PAQUETE]]/config.py": |
+    """Configuración de la aplicación (variables de entorno, ver .env.example)."""
+    from pydantic_settings import BaseSettings
+
+
+    class Settings(BaseSettings):
+        app_env: str = "dev"
+        secret_key: str = "definir-en-.env"
+
+        model_config = {"env_file": ".env"}
+
+
+    settings = Settings()
+
+  "src/[[PAQUETE]]/main.py": |
+    """Punto de entrada de [[NOMBRE]]."""
+    from fastapi import FastAPI
+
+    app = FastAPI(title="[[NOMBRE]]", description="[[DESCRIPCION]]")
+
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+  "tests/test_health.py": |
+    from fastapi.testclient import TestClient
+
+    from [[PAQUETE]].main import app
+
+
+    def test_health():
+        respuesta = TestClient(app).get("/health")
+        assert respuesta.status_code == 200
+        assert respuesta.json() == {"status": "ok"}
+
+  ".github/workflows/ci.yml": |
+    name: CI
+    on: [push, pull_request]
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - uses: actions/setup-python@v5
+            with:
+              python-version: "3.12"
+          - run: pip install -e ".[dev]"
+          - run: pytest

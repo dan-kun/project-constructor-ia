@@ -128,3 +128,11 @@ class ResultadoAuditoria(BaseModel):
     def pendientes(self) -> list[Hallazgo]:
         """Hallazgos que bloquean la construcción (todo lo no-verde)."""
         return [h for h in self.hallazgos if h.severidad is not Severidad.VERDE]
+
+
+class ResultadoConstruccion(BaseModel):
+    """Salida del Constructor: qué se generó y dónde."""
+
+    stack: str
+    raiz: str
+    archivos: list[str] = Field(default_factory=list)

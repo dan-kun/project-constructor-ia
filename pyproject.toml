@@ -24,4 +24,4 @@ pcia = "pcia.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-pcia = ["agents/prompts/*.md", "agents/rules/*.yaml"]
+pcia = ["agents/prompts/*.md", "agents/rules/*.yaml", "agents/templates/*.yaml"]

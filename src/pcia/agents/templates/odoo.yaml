@@ -1,0 +1,64 @@
+# Plantilla de scaffold: módulo de Odoo (Python).
+# Tokens disponibles: [[NOMBRE]], [[NOMBRE_KEBAB]], [[PAQUETE]], [[DESCRIPCION]]
+
+stack: odoo
+descripcion: Módulo de Odoo (Python)
+detecta: [odoo]
+archivos:
+  "__init__.py": |
+    from . import models
+
+  "__manifest__.py": |
+    {
+        "name": "[[NOMBRE]]",
+        "summary": "[[DESCRIPCION]]",
+        "version": "17.0.1.0.0",
+        "category": "Uncategorized",
+        "license": "LGPL-3",
+        "depends": ["base"],
+        "data": [
+            "security/ir.model.access.csv",
+            "views/views.xml",
+        ],
+        "application": True,
+    }
+
+  "models/__init__.py": |
+    from . import models
+
+  "models/models.py": |
+    from odoo import fields, models
+
+
+    class Registro(models.Model):
+        _name = "[[PAQUETE]].registro"
+        _description = "[[NOMBRE]] - registro"
+
+        name = fields.Char(required=True)
+        descripcion = fields.Text()
+        activo = fields.Boolean(default=True)
+
+  "security/ir.model.access.csv": |
+    id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+    access_[[PAQUETE]]_registro,[[PAQUETE]].registro,model_[[PAQUETE]]_registro,base.group_user,1,1,1,1
+
+  "views/views.xml": |
+    <?xml version="1.0" encoding="utf-8"?>
+    <odoo>
+        <record id="vista_registro_lista" model="ir.ui.view">
+            <field name="name">[[PAQUETE]].registro.lista</field>
+            <field name="model">[[PAQUETE]].registro</field>
+            <field name="arch" type="xml">
+                <tree>
+                    <field name="name"/>
+                    <field name="activo"/>
+                </tree>
+            </field>
+        </record>
+        <record id="accion_registros" model="ir.actions.act_window">
+            <field name="name">[[NOMBRE]]</field>
+            <field name="res_model">[[PAQUETE]].registro</field>
+            <field name="view_mode">tree,form</field>
+        </record>
+        <menuitem id="menu_raiz" name="[[NOMBRE]]" action="accion_registros"/>
+    </odoo>
