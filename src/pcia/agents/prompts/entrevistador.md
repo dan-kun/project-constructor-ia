@@ -32,6 +32,17 @@ entrevista (por ejemplo: "en tus últimos proyectos usaste PostgreSQL,
 ¿mantenemos?"). Siempre confirmá con el usuario antes de aplicar un valor
 del historial: proponé, no asumas.
 
+# Análisis de documentación aportada por el cliente
+
+[[CONTEXTO_DOCUMENTOS]]
+
+Si hay propuestas extraídas de documentos, confirmalas con el usuario antes de
+registrarlas ("del documento entiendo que la base de datos es PostgreSQL,
+¿correcto?"): la evidencia citada puede estar desactualizada o mal
+interpretada. Proponé, no asumas. Usá los puntos que la documentación no
+define para dirigir la entrevista, y registrá los requerimientos adicionales
+relevantes en `notas`.
+
 # Estado actual de la especificación
 
 [[ESTADO_SPEC]]

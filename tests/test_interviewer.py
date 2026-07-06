@@ -64,6 +64,24 @@ def test_sin_historial_el_prompt_lo_dice():
     assert "primer proyecto" in system_prompt
 
 
+def test_system_prompt_incluye_contexto_documental_precargado():
+    provider = FakeProvider([respuesta_json()])
+    contexto = '- base_datos: postgresql — evidencia: "usaremos PostgreSQL 15"'
+    entrevistador = Entrevistador(provider, ProjectSpec())
+    entrevistador.precargar_documentos(contexto)
+    entrevistador.iniciar()
+
+    system_prompt, _ = provider.llamadas[0]
+    assert contexto in system_prompt
+
+
+def test_sin_documentos_el_prompt_lo_dice():
+    provider = FakeProvider([respuesta_json()])
+    Entrevistador(provider, ProjectSpec()).iniciar()
+    system_prompt, _ = provider.llamadas[0]
+    assert "no aportó documentos" in system_prompt
+
+
 def test_json_malformado_reintenta_con_feedback_del_error():
     provider = FakeProvider(
         ["esto no es json", respuesta_json("ahora sí", {"lenguaje": "python"})]

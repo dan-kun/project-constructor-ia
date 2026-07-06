@@ -1,7 +1,8 @@
 """Orquestador: máquina de estados explícita del ciclo.
 
 No es un agente LLM, es código determinístico. Secuencia completa:
-Entrevista → Auditoría → Construcción → Verificación → Entrega → Aprendizaje.
+Análisis de documentos (opcional) → Entrevista → Auditoría → Construcción
+→ Verificación → Entrega → Aprendizaje.
 """
 
 from __future__ import annotations
@@ -9,8 +10,9 @@ from __future__ import annotations
 import datetime as dt
 from enum import Enum
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
+from pcia.agents.analista import Analista
 from pcia.agents.aprendizaje import Aprendizaje
 from pcia.agents.auditor import Auditor
 from pcia.agents.constructor import Constructor, DestinoInvalidoError
@@ -44,6 +46,7 @@ EMOJI_SEMAFORO = {
 
 
 class Fase(str, Enum):
+    ANALISIS = "analisis"
     ENTREVISTA = "entrevista"
     AUDITORIA = "auditoria"
     CONSTRUCCION = "construccion"
@@ -78,11 +81,13 @@ class Orquestador:
         memory_dir: Path,
         entrada: Callable[[str], str],
         salida: Callable[[str], None],
+        docs: Sequence[Path] | None = None,
     ) -> None:
         self._provider = provider
         self._memory_dir = Path(memory_dir)
         self._entrada = entrada
         self._salida = salida
+        self._docs = [Path(doc) for doc in (docs or [])]
         self.spec = ProjectSpec()
         self.ruta_spec: Path | None = None
         self.ruta_proyecto: Path | None = None
@@ -101,6 +106,7 @@ class Orquestador:
     def ejecutar(self) -> Path:
         """Corre la máquina de estados y devuelve la ruta de la spec guardada."""
         manejadores: dict[Fase, Callable[[], Fase]] = {
+            Fase.ANALISIS: self._fase_analisis,
             Fase.ENTREVISTA: self._fase_entrevista,
             Fase.AUDITORIA: self._fase_auditoria,
             Fase.CONSTRUCCION: self._fase_construccion,
@@ -108,13 +114,30 @@ class Orquestador:
             Fase.ENTREGA: self._fase_entrega,
             Fase.APRENDIZAJE: self._fase_aprendizaje,
         }
-        fase = Fase.ENTREVISTA
+        fase = Fase.ANALISIS
         while fase is not Fase.FIN:
             fase = manejadores[fase]()
         assert self.ruta_spec is not None
         return self.ruta_spec
 
     # --- fases -------------------------------------------------------------
+
+    def _fase_analisis(self) -> Fase:
+        """Análisis opcional de la documentación del cliente (Fase 6).
+
+        El Analista extrae propuestas con evidencia; el Entrevistador las
+        recibe como contexto y las confirma con el usuario (proponer, no
+        asumir). Sin documentos, la fase se saltea.
+        """
+        if not self._docs:
+            return Fase.ENTREVISTA
+        nombres = ", ".join(doc.name for doc in self._docs)
+        self._salida(f"Analizando la documentación aportada ({nombres})…")
+        analisis = Analista(self._provider).analizar(self._docs)
+        resumen = analisis.resumen_para_entrevista()
+        self._salida(f"Análisis de la documentación:\n{resumen}")
+        self._entrevistador.precargar_documentos(resumen)
+        return Fase.ENTREVISTA
 
     def _fase_entrevista(self) -> Fase:
         entrevistador = self._entrevistador

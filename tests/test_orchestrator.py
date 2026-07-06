@@ -67,7 +67,7 @@ UPDATES_INCOHERENTES = {
 }
 
 
-def crear_orquestador(provider, entradas, tmp_path):
+def crear_orquestador(provider, entradas, tmp_path, docs=None):
     entradas = iter(entradas)
     salidas: list[str] = []
     orq = Orquestador(
@@ -75,6 +75,7 @@ def crear_orquestador(provider, entradas, tmp_path):
         memory_dir=tmp_path / "memory",
         entrada=lambda _prompt: next(entradas),
         salida=salidas.append,
+        docs=docs,
     )
     return orq, salidas
 
@@ -421,6 +422,70 @@ def test_build_docker_fallido_aborta_si_el_usuario_no_acepta(tmp_path, monkeypat
 
     with pytest.raises(VerificacionFallidaError, match="docker-build"):
         orq.ejecutar()
+
+
+# --- fase de análisis de documentos ---------------------------------------------
+
+
+ANALISIS_LLM = json.dumps(
+    {
+        "propuestas": {
+            "base_datos": {
+                "valor": "postgresql",
+                "evidencia": "usaremos PostgreSQL 15",
+            }
+        },
+        "notas": [],
+        "preguntas_abiertas": ["no define autenticación"],
+    },
+    ensure_ascii=False,
+)
+
+
+def test_con_docs_analiza_primero_y_precarga_la_entrevista(tmp_path):
+    doc = tmp_path / "requerimientos.md"
+    doc.write_text("El cliente dice: usaremos PostgreSQL 15.", encoding="utf-8")
+    provider = FakeProvider(
+        [
+            ANALISIS_LLM,  # Analista de documentos
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
+        ]
+    )
+    orq, salidas = crear_orquestador(
+        provider, [str(tmp_path / "proyecto")], tmp_path, docs=[doc]
+    )
+
+    ruta = orq.ejecutar()
+
+    assert ruta.exists()
+    assert any("Análisis de la documentación" in s for s in salidas)
+    # el prompt del Analista recibió el documento
+    system_analista, _ = provider.llamadas[0]
+    assert "usaremos PostgreSQL 15" in system_analista
+    # el Entrevistador arrancó con las propuestas del análisis como contexto
+    system_entrevista, _ = provider.llamadas[1]
+    assert "postgresql" in system_entrevista
+    assert "no define autenticación" in system_entrevista
+
+
+def test_sin_docs_no_llama_al_analista(tmp_path):
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
+        ]
+    )
+    orq, salidas = crear_orquestador(provider, [str(tmp_path / "proyecto")], tmp_path)
+
+    orq.ejecutar()
+
+    # la primera llamada al LLM es la del Entrevistador, no la del Analista
+    system_prompt, _ = provider.llamadas[0]
+    assert "Agente Entrevistador" in system_prompt
+    assert not any("Análisis de la documentación" in s for s in salidas)
 
 
 # --- fase de aprendizaje --------------------------------------------------------

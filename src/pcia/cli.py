@@ -10,6 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from pcia.agents.analista import DocumentoInvalidoError
 from pcia.agents.constructor import ConstruccionError
 from pcia.agents.llm_json import ContratoInvalidoError
 from pcia.config import ConfigError, cargar_config, crear_provider
@@ -38,6 +39,13 @@ def main(argv: list[str] | None = None) -> int:
         default="config.yaml",
         help="Ruta al archivo de configuración (default: config.yaml)",
     )
+    parser.add_argument(
+        "--docs",
+        nargs="+",
+        default=[],
+        metavar="ARCHIVO",
+        help="Documentos del cliente (.md/.txt) para precargar la entrevista",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -52,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         memory_dir=Path(config.get("memory_dir", "memory")),
         entrada=input,
         salida=lambda texto: print(f"\n{texto}\n"),
+        docs=[Path(doc) for doc in args.docs],
     )
 
     print(BANNER)
@@ -64,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         ConstruccionError,
         ContratoInvalidoError,
         CoherenciaNoResueltaError,
+        DocumentoInvalidoError,
         LimiteDeTurnosError,
         LLMProviderError,
         VerificacionFallidaError,

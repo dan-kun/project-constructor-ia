@@ -65,3 +65,52 @@ def test_main_config_inexistente_devuelve_1(tmp_path, capsys):
     codigo = cli.main(["--config", str(tmp_path / "nada.yaml")])
     assert codigo == 1
     assert "Error de configuración" in capsys.readouterr().err
+
+
+def test_main_con_docs_analiza_antes_de_entrevistar(tmp_path, monkeypatch, capsys):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"provider: openai_compat\nmemory_dir: {tmp_path / 'memory'}\n", encoding="utf-8"
+    )
+    doc = tmp_path / "requerimientos.md"
+    doc.write_text("El cliente quiere una API en Python.", encoding="utf-8")
+    analisis = json.dumps(
+        {
+            "propuestas": {
+                "lenguaje": {"valor": "python", "evidencia": "una API en Python"}
+            },
+            "notas": [],
+            "preguntas_abiertas": [],
+        }
+    )
+    provider = FakeProvider(
+        [
+            analisis,  # Analista de documentos
+            respuesta_json("Listo.", UPDATES_COMPLETOS, done=True),
+            '{"hallazgos": []}',
+            json.dumps({"readme_markdown": "# demo\n", "adr_markdown": "# ADR-001\n"}),
+        ]
+    )
+    monkeypatch.setattr(cli, "crear_provider", lambda _config: provider)
+    entradas = iter([str(tmp_path / "proyecto")])
+    monkeypatch.setattr("builtins.input", lambda *_: next(entradas))
+
+    codigo = cli.main(["--config", str(config), "--docs", str(doc)])
+
+    assert codigo == 0
+    assert "Análisis de la documentación" in capsys.readouterr().out
+
+
+def test_main_con_doc_invalido_devuelve_1(tmp_path, monkeypatch, capsys):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"provider: openai_compat\nmemory_dir: {tmp_path / 'memory'}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(cli, "crear_provider", lambda _config: FakeProvider([]))
+
+    codigo = cli.main(
+        ["--config", str(config), "--docs", str(tmp_path / "no-existe.md")]
+    )
+
+    assert codigo == 1
+    assert "No se pudo leer" in capsys.readouterr().err

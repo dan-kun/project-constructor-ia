@@ -38,13 +38,22 @@ class Entrevistador:
     """Conduce la entrevista y actualiza la ProjectSpec compartida."""
 
     def __init__(
-        self, provider: LLMProvider, spec: ProjectSpec, historial_previo: str = ""
+        self,
+        provider: LLMProvider,
+        spec: ProjectSpec,
+        historial_previo: str = "",
+        contexto_documentos: str = "",
     ) -> None:
         self._provider = provider
         self.spec = spec
         self.historial: list[ChatMessage] = []
         self._historial_previo = historial_previo
+        self._contexto_documentos = contexto_documentos
         self._plantilla = RUTA_PROMPT.read_text(encoding="utf-8")
+
+    def precargar_documentos(self, contexto: str) -> None:
+        """Inyecta el análisis documental del Analista (Fase 6) en el prompt."""
+        self._contexto_documentos = contexto
 
     def iniciar(self) -> RespuestaEntrevistador:
         """Primer turno de la entrevista (saludo y primera pregunta)."""
@@ -74,5 +83,10 @@ class Entrevistador:
             .replace(
                 "[[HISTORIAL]]",
                 self._historial_previo or "ninguno (es el primer proyecto del usuario)",
+            )
+            .replace(
+                "[[CONTEXTO_DOCUMENTOS]]",
+                self._contexto_documentos
+                or "ninguno (el usuario no aportó documentos)",
             )
         )
