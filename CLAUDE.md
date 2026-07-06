@@ -7,11 +7,12 @@ El diseño conceptual completo está en `docs/DISENO.md` — **leerlo antes de i
 ## Qué es
 
 Sistema multiagente que:
-1. **Entrevista** al usuario de forma adaptativa para definir la especificación de un proyecto nuevo (tipo, lenguaje, framework, arquitectura, seguridad, infra, CI/CD).
-2. **Audita** la coherencia técnica de la especificación antes de construir (híbrido: reglas determinísticas + LLM).
-3. **Construye** el scaffold del proyecto con criterios profesionales.
-4. **Verifica** lo construido (parseo de configs, builds, linters, smoke tests) y corrige fallas.
-5. **Aprende**: persiste decisiones y resultados para mejorar futuras entrevistas y auditorías.
+1. **Analiza** (opcional, `--docs`) documentación del cliente (`.md`/`.txt`) y extrae propuestas con evidencia textual para precargar la entrevista.
+2. **Entrevista** al usuario de forma adaptativa para definir la especificación de un proyecto nuevo (tipo, lenguaje, framework, arquitectura, seguridad, infra, CI/CD).
+3. **Audita** la coherencia técnica de la especificación antes de construir (híbrido: reglas determinísticas + LLM).
+4. **Construye** el scaffold del proyecto con criterios profesionales.
+5. **Verifica** lo construido (parseo de configs, builds, linters, smoke tests) y corrige fallas.
+6. **Aprende**: persiste decisiones y resultados para mejorar futuras entrevistas y auditorías.
 
 ## Arquitectura (reglas NO negociables)
 
@@ -32,7 +33,7 @@ Sistema multiagente que:
 src/pcia/
 ├── domain/        # modelos (ProjectSpec) y puertos (LLMProvider) — sin dependencias externas salvo pydantic
 ├── adapters/      # implementaciones de LLMProvider por proveedor
-├── agents/        # Entrevistador, Auditor, Constructor, Verificador, Aprendizaje (+ prompts/ en .md)
+├── agents/        # Analista de Documentos, Entrevistador, Auditor, Constructor, Verificador, Aprendizaje (+ prompts/ en .md)
 ├── orchestrator/  # loop principal y máquina de estados del ciclo
 ├── config.py      # carga de config.yaml y factory de proveedores
 └── cli.py         # punto de entrada (script `pcia`)
@@ -60,8 +61,9 @@ docs/              # DISENO.md (diseño completo y roadmap)
 - [x] Fase 4a: Agente Verificador de sintaxis + ciclo de corrección acotado
 - [x] Fase 4b: builds en Docker, smoke tests en la imagen y linters opcionales (declarados por plantilla)
 - [x] Fase 5: Memoria persistente (RegistroProyecto en `memory/`) y Agente de Aprendizaje (precarga de entrevista)
+- [x] Fase 6: Agente Analista de Documentos (`--docs`: extrae propuestas con evidencia de la documentación del cliente y precarga la entrevista)
 
-**Roadmap de las 5 fases completo.** Posibles próximos pasos: corrida real end-to-end con un LLM de verdad, autocorrección de fallas de build, más plantillas/reglas.
+**Roadmap completo (5 fases + Fase 6 de análisis documental).** Posibles próximos pasos: corrida real end-to-end con un LLM de verdad, autocorrección de fallas de build, más plantillas/reglas, soporte PDF en el Analista.
 
 ## Comandos
 

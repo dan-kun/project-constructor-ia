@@ -23,6 +23,7 @@ cuestiona y advierte, no solo genera.
 | Agente | Rol | Notas de implementación |
 |---|---|---|
 | Orquestador | Coordina el ciclo, gestiona estado y límites | Máquina de estados explícita; no es un agente LLM, es código determinístico |
+| Analista de Documentos | Extrae propuestas de la documentación del cliente antes de la entrevista | Fase 6, opcional (`--docs`). Lee `.md`/`.txt` (con truncado acotado) y devuelve propuestas **con evidencia textual**, notas y preguntas abiertas. No escribe la spec: el Entrevistador confirma cada propuesta con el usuario |
 | Entrevistador | Elicitación adaptativa de requisitos | LLM con salida JSON estricta: `{message_to_user, updates, done}`; deriva preguntas del estado de la spec |
 | Auditor | Detección de incongruencias técnicas | **Híbrido**: matriz de reglas determinísticas (YAML) + análisis LLM para lo no catalogado. Salida: hallazgos con severidad (verde/amarillo/rojo) y corrección propuesta |
 | Constructor | Genera scaffold, configs, docs, ADRs | Plantillas por stack + LLM para lo específico. Fase 3: FastAPI, módulo Odoo, NestJS |
@@ -31,7 +32,7 @@ cuestiona y advierte, no solo genera.
 
 ## 4. Ciclos (orquestación)
 
-Secuencia: Entrevista → Auditoría → Construcción → Verificación → Entrega → Aprendizaje
+Secuencia: Análisis de documentos (opcional) → Entrevista → Auditoría → Construcción → Verificación → Entrega → Aprendizaje
 
 - **Ciclo de coherencia** (Auditoría → Entrevista): ante hallazgo, se repregunta al usuario
   con la corrección propuesta. Repite hasta spec coherente o riesgo asumido explícitamente
@@ -90,6 +91,12 @@ Consecuencias de diseño:
    corrección con límite de 3.
 5. **Fase 5 — Memoria/Aprendizaje**: persistir specs, hallazgos y resoluciones; precargar
    entrevista con historial (ej.: "en tus últimos proyectos usaste PostgreSQL, ¿mantenemos?").
+6. **Fase 6 — Analista de Documentos**: procesar documentación del cliente (requerimientos,
+   actas, mails en `.md`/`.txt` vía `--docs`) antes de la entrevista. Extrae propuestas para
+   la spec con evidencia textual (nunca inventa: lo que el documento no dice va a
+   `preguntas_abiertas`) y el Entrevistador las confirma con el usuario — proponer, no asumir,
+   mismo principio que la precarga del Aprendizaje. Criterio: entrevista más corta partiendo
+   de un documento real, con cada propuesta trazable a su cita.
 
 ## 8. Formato de salida del Entrevistador (contrato)
 
