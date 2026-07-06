@@ -1,12 +1,15 @@
 """Agente Verificador.
 
-Fase 4a: verificación de sintaxis de todo archivo generado, por extensión
-(py, json, yaml, toml, xml, csv). Lo que no tiene verificador se reporta
-como ``omitido`` (builds, linters y smoke tests llegan en la Fase 4b).
+Dos capas:
 
-Ante una falla, ``corregir_archivo`` pide al LLM la corrección mínima con
-contrato JSON estricto; el ciclo corrección→re-verificación (acotado) lo
-maneja el orquestador.
+- **Fase 4a — sintaxis**: verificación por extensión (py, json, yaml, toml,
+  xml, csv) de todo archivo generado; lo que no tiene verificador se
+  reporta como ``omitido``. Ante una falla, ``corregir_archivo`` pide al
+  LLM la corrección mínima; el ciclo acotado lo maneja el orquestador.
+- **Fase 4b — profunda**: builds en Docker, smoke tests dentro de la imagen
+  y linters host-side, según lo que declare la plantilla del stack. Si la
+  herramienta no está disponible (docker, linter), el chequeo se reporta
+  como ``omitido``: degradación con gracia, nunca falla por el entorno.
 """
 
 from __future__ import annotations
@@ -14,6 +17,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import shutil
+import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Callable
@@ -27,10 +32,13 @@ except ModuleNotFoundError:  # pragma: no cover - depende de la versión de Pyth
     import tomli as tomllib
 
 from pcia.agents.llm_json import consultar_con_contrato
-from pcia.domain.models import Chequeo, ResultadoVerificacion
+from pcia.domain.models import Chequeo, ResultadoVerificacion, VerificacionProfunda
 from pcia.domain.ports import ChatMessage, LLMProvider
 
 RUTA_PROMPT = Path(__file__).parent / "prompts" / "verificador.md"
+TIMEOUT_BUILD_SEGUNDOS = 600.0
+TIMEOUT_COMANDO_SEGUNDOS = 180.0
+MAX_DETALLE = 1500
 
 
 class CorreccionArchivo(BaseModel):
@@ -111,6 +119,75 @@ class Verificador:
             return Chequeo(archivo=relativa, estado="error", detalle=str(exc))
         return Chequeo(archivo=relativa, estado="ok")
 
+    def verificar_profundo(
+        self,
+        raiz: Path,
+        verificaciones: list[VerificacionProfunda],
+        etiqueta_imagen: str,
+    ) -> list[Chequeo]:
+        """Corre los chequeos profundos declarados por la plantilla (Fase 4b)."""
+        chequeos = []
+        imagen_construida = False
+        for verificacion in verificaciones:
+            if verificacion.tipo in ("docker_build", "docker_run") and not _binario_disponible("docker"):
+                chequeos.append(
+                    Chequeo(
+                        archivo=verificacion.id,
+                        estado="omitido",
+                        detalle="docker no está disponible en este entorno",
+                    )
+                )
+                continue
+
+            if verificacion.tipo == "docker_build":
+                chequeo = _correr(
+                    verificacion.id,
+                    ["docker", "build", "-t", etiqueta_imagen, "."],
+                    raiz,
+                    TIMEOUT_BUILD_SEGUNDOS,
+                )
+                imagen_construida = chequeo.estado == "ok"
+                chequeos.append(chequeo)
+            elif verificacion.tipo == "docker_run":
+                if not imagen_construida:
+                    chequeos.append(
+                        Chequeo(
+                            archivo=verificacion.id,
+                            estado="omitido",
+                            detalle="requiere una imagen construida (docker_build ok)",
+                        )
+                    )
+                    continue
+                chequeos.append(
+                    _correr(
+                        verificacion.id,
+                        ["docker", "run", "--rm", etiqueta_imagen, *verificacion.comando],
+                        raiz,
+                        TIMEOUT_COMANDO_SEGUNDOS,
+                    )
+                )
+            else:  # comando host-side (linters opcionales)
+                if verificacion.requiere and not _binario_disponible(verificacion.requiere):
+                    chequeos.append(
+                        Chequeo(
+                            archivo=verificacion.id,
+                            estado="omitido",
+                            detalle=f"'{verificacion.requiere}' no está disponible en este entorno",
+                        )
+                    )
+                    continue
+                chequeos.append(
+                    _correr(verificacion.id, verificacion.comando, raiz, TIMEOUT_COMANDO_SEGUNDOS)
+                )
+
+        if imagen_construida:
+            # Limpieza best-effort de la imagen de verificación.
+            try:
+                _ejecutar(["docker", "rmi", "-f", etiqueta_imagen], raiz, 60.0)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+        return chequeos
+
     def corregir_archivo(self, raiz: Path, relativa: str, error: str) -> None:
         """Pide al LLM la corrección mínima y reescribe el archivo."""
         ruta = raiz / relativa
@@ -126,3 +203,35 @@ class Verificador:
             self._provider, system_prompt, mensajes, CorreccionArchivo
         )
         ruta.write_text(correccion.contenido_corregido, encoding="utf-8")
+
+
+def _binario_disponible(nombre: str) -> bool:
+    return shutil.which(nombre) is not None
+
+
+def _ejecutar(comando: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        comando, cwd=cwd, capture_output=True, text=True, timeout=timeout
+    )
+
+
+def _correr(id_chequeo: str, comando: list[str], cwd: Path, timeout: float) -> Chequeo:
+    """Ejecuta un comando y lo traduce a un Chequeo (ok / error con detalle)."""
+    try:
+        resultado = _ejecutar(comando, cwd, timeout)
+    except subprocess.TimeoutExpired:
+        return Chequeo(
+            archivo=id_chequeo,
+            estado="error",
+            detalle=f"timeout tras {timeout:.0f}s: {' '.join(comando)}",
+        )
+    except OSError as exc:
+        return Chequeo(archivo=id_chequeo, estado="error", detalle=str(exc))
+    if resultado.returncode != 0:
+        salida = (resultado.stderr or resultado.stdout or "").strip()
+        return Chequeo(
+            archivo=id_chequeo,
+            estado="error",
+            detalle=f"código {resultado.returncode}: {salida[-MAX_DETALLE:]}",
+        )
+    return Chequeo(archivo=id_chequeo, estado="ok")

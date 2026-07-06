@@ -1,12 +1,15 @@
-"""Tests del Agente Verificador con FakeProvider (sin llamadas reales)."""
+"""Tests del Agente Verificador con FakeProvider (sin llamadas reales ni Docker)."""
 
 import json
+import subprocess
 
 import pytest
 
 from conftest import FakeProvider
+from pcia.agents import verificador as modulo_verificador
 from pcia.agents.llm_json import ContratoInvalidoError
 from pcia.agents.verificador import Verificador
+from pcia.domain.models import VerificacionProfunda
 
 
 def crear_verificador(respuestas=None):
@@ -105,3 +108,101 @@ def test_correccion_malformada_reintenta_y_luego_escala(tmp_path):
         verificador.corregir_archivo(tmp_path, "config.json", "json inválido")
     # el archivo no se tocó
     assert (tmp_path / "config.json").read_text(encoding="utf-8") == "{roto"
+
+
+# --- verificación profunda (Fase 4b) -----------------------------------------
+
+
+VERIFICACIONES = [
+    VerificacionProfunda(id="docker-build", tipo="docker_build"),
+    VerificacionProfunda(
+        id="smoke", tipo="docker_run", comando=["python", "-c", "import x"]
+    ),
+    VerificacionProfunda(
+        id="lint", tipo="comando", requiere="ruff", comando=["ruff", "check", "."]
+    ),
+]
+
+
+class EjecutorFalso:
+    """Registra los comandos ejecutados y devuelve resultados programados."""
+
+    def __init__(self, codigos=None):
+        self.codigos = dict(codigos or {})  # comando[0..1] -> returncode
+        self.comandos = []
+
+    def __call__(self, comando, cwd, timeout):
+        self.comandos.append((list(comando), cwd, timeout))
+        codigo = self.codigos.get(" ".join(comando[:2]), 0)
+        return subprocess.CompletedProcess(comando, codigo, stdout="", stderr="falló")
+
+
+def profundos(monkeypatch, tmp_path, binarios, codigos=None, verificaciones=None):
+    ejecutor = EjecutorFalso(codigos)
+    monkeypatch.setattr(modulo_verificador, "_ejecutar", ejecutor)
+    monkeypatch.setattr(
+        modulo_verificador, "_binario_disponible", lambda nombre: nombre in binarios
+    )
+    chequeos = crear_verificador().verificar_profundo(
+        tmp_path, verificaciones or VERIFICACIONES, "pcia-verif-demo"
+    )
+    return chequeos, ejecutor
+
+
+def test_sin_docker_los_chequeos_docker_se_omiten(monkeypatch, tmp_path):
+    chequeos, ejecutor = profundos(monkeypatch, tmp_path, binarios=set())
+
+    estados = {c.archivo: c.estado for c in chequeos}
+    assert estados == {"docker-build": "omitido", "smoke": "omitido", "lint": "omitido"}
+    assert "docker no está disponible" in chequeos[0].detalle
+    assert ejecutor.comandos == []  # no se ejecutó nada
+
+
+def test_build_y_smoke_ok_con_limpieza_de_imagen(monkeypatch, tmp_path):
+    chequeos, ejecutor = profundos(monkeypatch, tmp_path, binarios={"docker", "ruff"})
+
+    assert [c.estado for c in chequeos] == ["ok", "ok", "ok"]
+    comandos = [c[0] for c in ejecutor.comandos]
+    assert comandos[0] == ["docker", "build", "-t", "pcia-verif-demo", "."]
+    assert comandos[1] == ["docker", "run", "--rm", "pcia-verif-demo", "python", "-c", "import x"]
+    assert comandos[2] == ["ruff", "check", "."]
+    assert comandos[3][:2] == ["docker", "rmi"]  # limpieza best-effort
+    assert all(c[1] == tmp_path for c in ejecutor.comandos)
+
+
+def test_build_fallido_reporta_error_y_omite_el_smoke(monkeypatch, tmp_path):
+    chequeos, ejecutor = profundos(
+        monkeypatch, tmp_path, binarios={"docker"}, codigos={"docker build": 1}
+    )
+
+    por_id = {c.archivo: c for c in chequeos}
+    assert por_id["docker-build"].estado == "error"
+    assert "falló" in por_id["docker-build"].detalle
+    assert por_id["smoke"].estado == "omitido"
+    assert "requiere una imagen construida" in por_id["smoke"].detalle
+    # sin build exitoso no hay limpieza de imagen
+    assert not any(c[0][:2] == ["docker", "rmi"] for c in ejecutor.comandos)
+
+
+def test_linter_no_disponible_se_omite_y_no_bloquea(monkeypatch, tmp_path):
+    chequeos, _ = profundos(monkeypatch, tmp_path, binarios={"docker"})
+
+    lint = next(c for c in chequeos if c.archivo == "lint")
+    assert lint.estado == "omitido"
+    assert "'ruff' no está disponible" in lint.detalle
+
+
+def test_timeout_en_un_chequeo_es_error(monkeypatch, tmp_path):
+    def ejecutar_con_timeout(comando, cwd, timeout):
+        raise subprocess.TimeoutExpired(comando, timeout)
+
+    monkeypatch.setattr(modulo_verificador, "_ejecutar", ejecutar_con_timeout)
+    monkeypatch.setattr(modulo_verificador, "_binario_disponible", lambda _: True)
+
+    chequeos = crear_verificador().verificar_profundo(
+        tmp_path,
+        [VerificacionProfunda(id="lento", tipo="comando", comando=["algo"])],
+        "pcia-verif-demo",
+    )
+    assert chequeos[0].estado == "error"
+    assert "timeout" in chequeos[0].detalle
