@@ -514,9 +514,10 @@ def test_build_fallido_se_corrige_y_entrega(tmp_path, monkeypatch):
         ]
     )
     proyecto = tmp_path / "proyecto"
-    orq, salidas = crear_orquestador(provider, ["", str(proyecto)], tmp_path)
+    # la corrección toca el Dockerfile: se confirma antes de re-ejecutarlo
+    orq, salidas = crear_orquestador(provider, ["", str(proyecto), ""], tmp_path)
 
-    ruta = orq.ejecutar()  # entrega sin preguntar: la corrección resolvió
+    ruta = orq.ejecutar()  # entrega sin más preguntas: la corrección resolvió
 
     dockerfile = (proyecto / "Dockerfile").read_text(encoding="utf-8")
     assert dockerfile == "FROM python:3.12-slim\n"
@@ -541,9 +542,10 @@ def test_correccion_de_build_persistente_agota_ciclos_y_escala(tmp_path, monkeyp
             CORRECCION_BUILD,  # intento 2: tampoco
         ]
     )
-    # tras agotar los ciclos, el usuario decide entregar igual
+    # confirma cada re-ejecución del Dockerfile corregido; tras agotar los
+    # ciclos, decide entregar igual
     orq, salidas = crear_orquestador(
-        provider, ["", str(tmp_path / "proyecto"), "s"], tmp_path
+        provider, ["", str(tmp_path / "proyecto"), "", "", "s"], tmp_path
     )
 
     ruta = orq.ejecutar()
@@ -554,6 +556,28 @@ def test_correccion_de_build_persistente_agota_ciclos_y_escala(tmp_path, monkeyp
     assert len(registro["correcciones_build"]) == 2
     estados = {c["archivo"]: c["estado"] for c in registro["verificacion"]["profundos"]}
     assert estados["docker-build"] == "error"
+
+
+def test_dockerfile_reescrito_no_se_ejecuta_sin_confirmacion(tmp_path, monkeypatch):
+    simular_docker(monkeypatch, codigos={"docker build": 1})
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
+            CORRECCION_BUILD,  # reescribe el Dockerfile
+        ]
+    )
+    # rechaza ejecutar el Dockerfile corregido; luego no entrega con errores
+    orq, salidas = crear_orquestador(
+        provider, ["", str(tmp_path / "proyecto"), "n", "n"], tmp_path
+    )
+
+    with pytest.raises(VerificacionFallidaError):
+        orq.ejecutar()
+    assert any("no se ejecutó" in s for s in salidas)
+    # un solo build: el Dockerfile corregido nunca corrió
+    assert sum("Corrigiendo fallas" in s for s in salidas) == 1
 
 
 def test_corrector_sin_cambios_escala_directo_al_usuario(tmp_path, monkeypatch):

@@ -170,8 +170,15 @@ def test_resultado_incluye_verificaciones_renderizadas(tmp_path):
 
     por_id = {v.id: v for v in resultado.verificaciones}
     assert por_id["docker-build"].tipo == "docker_build"
-    # el token [[PAQUETE]] del smoke test quedó renderizado
-    assert por_id["smoke-import-app"].comando == ["python", "-c", "import mi_api.main"]
+    # el token [[PAQUETE]] del smoke test quedó renderizado, con el secreto
+    # de fantasía inyectado (la app no importa sin SECRET_KEY)
+    assert por_id["smoke-import-app"].comando == [
+        "env",
+        "SECRET_KEY=solo-smoke-test",
+        "python",
+        "-c",
+        "import mi_api.main",
+    ]
     assert por_id["lint-ruff"].requiere == "ruff"
 
 

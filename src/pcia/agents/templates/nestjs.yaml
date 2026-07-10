@@ -121,6 +121,8 @@ archivos:
     WORKDIR /app
     COPY --from=build /app/dist ./dist
     COPY --from=build /app/node_modules ./node_modules
+    # la imagen corre como el usuario sin privilegios de la imagen base
+    USER node
     EXPOSE 3000
     CMD ["node", "dist/main.js"]
 

@@ -7,9 +7,10 @@ detecta: [fastapi, "fast api"]
 verificaciones:
   - id: docker-build
     tipo: docker_build
+  # el smoke inyecta un secreto de fantasía: sin SECRET_KEY la app no importa
   - id: smoke-import-app
     tipo: docker_run
-    comando: ["python", "-c", "import [[PAQUETE]].main"]
+    comando: ["env", "SECRET_KEY=solo-smoke-test", "python", "-c", "import [[PAQUETE]].main"]
   # opcional: el build y el smoke test son la garantía; sin ruff instalado
   # el resultado queda "aprobado con advertencias", no "inconcluso"
   - id: lint-ruff
@@ -73,8 +74,9 @@ archivos:
 
   ".env.example": |
     # Copiar a .env y completar. Nunca commitear secretos reales.
+    # SECRET_KEY es obligatoria: la aplicación no arranca sin ella.
     APP_ENV=dev
-    SECRET_KEY=cambiar-por-un-secreto-real
+    SECRET_KEY=
 
   "Dockerfile": |
     FROM python:3.12-slim
@@ -82,19 +84,26 @@ archivos:
     COPY pyproject.toml ./
     COPY src/ src/
     RUN pip install --no-cache-dir .
+    # la imagen corre como usuario sin privilegios, nunca root
+    RUN useradd --create-home --uid 1001 appuser
+    USER appuser
     EXPOSE 8000
     CMD ["uvicorn", "[[PAQUETE]].main:app", "--host", "0.0.0.0", "--port", "8000"]
 
   "src/[[PAQUETE]]/__init__.py": ""
 
   "src/[[PAQUETE]]/config.py": |
-    """Configuración de la aplicación (variables de entorno, ver .env.example)."""
+    """Configuración de la aplicación (variables de entorno, ver .env.example).
+
+    SECRET_KEY no tiene valor por defecto a propósito: la aplicación falla
+    al arrancar si no está definida, en lugar de correr con una clave débil.
+    """
     from pydantic_settings import BaseSettings
 
 
     class Settings(BaseSettings):
         app_env: str = "dev"
-        secret_key: str = "definir-en-.env"
+        secret_key: str  # obligatoria: sin default
 
         model_config = {"env_file": ".env"}
 
@@ -105,12 +114,20 @@ archivos:
     """Punto de entrada de [[NOMBRE]]."""
     from fastapi import FastAPI
 
+    from [[PAQUETE]].config import settings
+
     app = FastAPI(title="[[NOMBRE]]", description="[[DESCRIPCION]]")
 
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "env": settings.app_env}
+
+  "tests/conftest.py": |
+    """Los tests corren sin .env: se inyecta un secreto de fantasía."""
+    import os
+
+    os.environ.setdefault("SECRET_KEY", "solo-para-tests")
 
   "tests/test_health.py": |
     from fastapi.testclient import TestClient
@@ -121,7 +138,20 @@ archivos:
     def test_health():
         respuesta = TestClient(app).get("/health")
         assert respuesta.status_code == 200
-        assert respuesta.json() == {"status": "ok"}
+        assert respuesta.json()["status"] == "ok"
+
+  "tests/test_config.py": |
+    """La aplicación no arranca sin SECRET_KEY (seguridad primero)."""
+    import pytest
+    from pydantic import ValidationError
+
+    from [[PAQUETE]].config import Settings
+
+
+    def test_sin_secret_key_no_arranca(monkeypatch):
+        monkeypatch.delenv("SECRET_KEY", raising=False)
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None)
 
   ".github/workflows/ci.yml": |
     name: CI

@@ -412,6 +412,21 @@ class Orquestador:
                 f"(si esta corrección se repite en otros proyectos "
                 f"'{self._construccion.stack}', el defecto puede estar en la plantilla)"
             )
+            # Ejecutar un Dockerfile reescrito por el LLM corre código nuevo
+            # en el host: decisión de alto impacto, la confirma el humano.
+            if any(
+                Path(c.archivo).name == "Dockerfile" for c in correccion.correcciones
+            ):
+                eleccion = self._entrada(
+                    "El corrector reescribió el Dockerfile. ¿Ejecuto el build "
+                    "con el Dockerfile corregido? (S/n) "
+                )
+                if eleccion.strip().lower().startswith("n"):
+                    self._salida(
+                        "Re-verificación cancelada: el Dockerfile corregido "
+                        "no se ejecutó."
+                    )
+                    return profundos
             profundos = verificador.verificar_profundo(
                 raiz, self._construccion.verificaciones, etiqueta
             )
