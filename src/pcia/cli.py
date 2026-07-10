@@ -55,12 +55,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error de configuración: {exc}", file=sys.stderr)
         return 1
 
+    nombre_proveedor = config.get("provider", "")
+    modelo = (config.get(nombre_proveedor) or {}).get("model")
     orquestador = Orquestador(
         provider,
         memory_dir=Path(config.get("memory_dir", "memory")),
         entrada=input,
         salida=lambda texto: print(f"\n{texto}\n"),
         docs=[Path(doc) for doc in args.docs],
+        proveedor=f"{nombre_proveedor}:{modelo}" if modelo else nombre_proveedor or None,
     )
 
     print(BANNER)

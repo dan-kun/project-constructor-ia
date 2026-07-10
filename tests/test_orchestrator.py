@@ -120,6 +120,8 @@ def test_ciclo_completo_guarda_spec_y_genera_proyecto(tmp_path):
     # omitidos obligatorios (docker) ⇒ el estado agregado es inconcluso
     assert registro["estado_final"] == "inconcluso"
     assert any("Estado final de la entrega: ❓ inconcluso" in s for s in salidas)
+    # métricas de la corrida persistidas
+    assert registro["duracion_segundos"] >= 0
     assert any("Especificación y registro" in s for s in salidas)
     assert any("Memoria actualizada" in s for s in salidas)
 

@@ -227,6 +227,10 @@ class RegistroProyecto(BaseModel):
     # Estado agregado de la entrega: verificación + riesgos asumidos
     # (un riesgo amarillo asumido degrada "aprobado" a "con advertencias").
     estado_final: EstadoVerificacion | None = None
+    # Métricas de la corrida: qué proveedor/modelo ejecutó los agentes y
+    # cuánto tardó el ciclo completo (entrevista incluida).
+    proveedor: str | None = None
+    duracion_segundos: float | None = None
     # Diagnósticos del corrector de builds (Fase 7): si un diagnóstico se
     # repite entre proyectos del mismo stack, el defecto está en la plantilla.
     correcciones_build: list[str] = Field(default_factory=list)

@@ -59,6 +59,9 @@ def test_main_ejecuta_entrevista_completa(tmp_path, monkeypatch, capsys):
     guardados = list((tmp_path / "memory").glob("demo-*.json"))
     assert len(guardados) == 1
     assert (tmp_path / "proyecto" / "README.md").exists()
+    # el registro guarda qué proveedor ejecutó la corrida
+    registro = json.loads(guardados[0].read_text(encoding="utf-8"))
+    assert registro["proveedor"] == "openai_compat"
 
 
 def test_main_config_inexistente_devuelve_1(tmp_path, capsys):

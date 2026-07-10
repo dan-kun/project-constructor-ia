@@ -8,6 +8,7 @@ Análisis de documentos (opcional) → Entrevista → Auditoría → Construcci�
 from __future__ import annotations
 
 import datetime as dt
+import time
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Sequence
@@ -96,12 +97,15 @@ class Orquestador:
         entrada: Callable[[str], str],
         salida: Callable[[str], None],
         docs: Sequence[Path] | None = None,
+        proveedor: str | None = None,
     ) -> None:
         self._provider = provider
         self._memory_dir = Path(memory_dir)
         self._entrada = entrada
         self._salida = salida
         self._docs = [Path(doc) for doc in (docs or [])]
+        self._proveedor = proveedor
+        self._inicio = time.monotonic()
         self.spec = ProjectSpec()
         self.ruta_spec: Path | None = None
         self.ruta_proyecto: Path | None = None
@@ -129,6 +133,7 @@ class Orquestador:
             Fase.ENTREGA: self._fase_entrega,
             Fase.APRENDIZAJE: self._fase_aprendizaje,
         }
+        self._inicio = time.monotonic()
         fase = Fase.ANALISIS
         while fase is not Fase.FIN:
             fase = manejadores[fase]()
@@ -463,9 +468,14 @@ class Orquestador:
             verificacion=self._verificacion,
             estado_final=estado_final,
             correcciones_build=self.correcciones_build,
+            proveedor=self._proveedor,
+            duracion_segundos=round(time.monotonic() - self._inicio, 1),
         )
         self.ruta_spec = self._memoria.guardar(registro)
-        self._salida(f"Especificación y registro del proyecto guardados en {self.ruta_spec}")
+        self._salida(
+            f"Especificación y registro del proyecto guardados en {self.ruta_spec} "
+            f"(duración total: {registro.duracion_segundos:.0f}s)"
+        )
         return Fase.APRENDIZAJE
 
     def _fase_aprendizaje(self) -> Fase:
