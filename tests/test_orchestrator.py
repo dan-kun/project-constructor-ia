@@ -59,12 +59,15 @@ UPDATES_COMPLETOS = {
     "alcance": "mvp",
 }
 
-# Variante que dispara la regla determinística serverless-websockets.
+# Variante que dispara la regla determinística serverless-websockets (roja).
 UPDATES_INCOHERENTES = {
     **UPDATES_COMPLETOS,
     "descripcion": "chat con websockets en tiempo real",
     "infraestructura": "aws lambda (serverless)",
 }
+
+# Variante que dispara la regla api-sin-autenticacion (amarilla, asumible).
+UPDATES_SIN_AUTH = {**UPDATES_COMPLETOS, "autenticacion": "ninguna"}
 
 
 def crear_orquestador(provider, entradas, tmp_path, docs=None):
@@ -185,8 +188,9 @@ def test_hallazgo_corregido_via_entrevistador_y_reauditoria(tmp_path):
             DOCS_LLM,
         ]
     )
-    # confirma la spec; no asume el riesgo; acepta la corrección; elige destino
-    entradas = ["", "n", "", str(tmp_path / "proyecto")]
+    # confirma la spec; el hallazgo rojo solo ofrece corregir (acepta la
+    # corrección propuesta con enter); elige destino
+    entradas = ["", "", str(tmp_path / "proyecto")]
     orq, salidas = crear_orquestador(provider, entradas, tmp_path)
 
     ruta = orq.ejecutar()
@@ -204,10 +208,10 @@ def test_hallazgo_corregido_via_entrevistador_y_reauditoria(tmp_path):
     assert "Corrección propuesta" in mensajes[-1].content
 
 
-def test_riesgo_asumido_queda_documentado_y_no_bloquea(tmp_path):
+def test_riesgo_amarillo_asumido_queda_documentado_y_no_bloquea(tmp_path):
     provider = FakeProvider(
         [
-            respuesta_json("Resumen.", UPDATES_INCOHERENTES, done=True),
+            respuesta_json("Resumen.", UPDATES_SIN_AUTH, done=True),
             SIN_HALLAZGOS_LLM,  # auditoría 1
             SIN_HALLAZGOS_LLM,  # auditoría 2: el riesgo asumido ya no se reporta
             DOCS_LLM,
@@ -222,9 +226,25 @@ def test_riesgo_asumido_queda_documentado_y_no_bloquea(tmp_path):
     registro = json.loads(ruta.read_text(encoding="utf-8"))
     riesgos = registro["spec"]["riesgos_asumidos"]
     assert len(riesgos) == 1
-    assert riesgos[0].startswith("serverless-websockets:")
+    assert riesgos[0].startswith("api-sin-autenticacion:")
     assert registro["resoluciones"][0]["resolucion"] == "asumido"
     assert any("Riesgo asumido" in s for s in salidas)
+    # propagación: el riesgo asumido se advierte también en la entrega
+    assert any("riesgo(s) asumido(s)" in s for s in salidas)
+
+
+def test_hallazgo_rojo_no_es_asumible_y_abortar_cancela(tmp_path):
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_INCOHERENTES, done=True),
+            SIN_HALLAZGOS_LLM,  # auditoría 1: dispara serverless-websockets (rojo)
+        ]
+    )
+    # confirma la spec; ante el hallazgo bloqueante decide abortar
+    orq, _ = crear_orquestador(provider, ["", "abortar"], tmp_path)
+
+    with pytest.raises(CoherenciaNoResueltaError, match="abortó.*serverless-websockets"):
+        orq.ejecutar()
 
 
 def test_coherencia_no_resuelta_escala_tras_el_limite(tmp_path):
@@ -239,7 +259,8 @@ def test_coherencia_no_resuelta_escala_tras_el_limite(tmp_path):
             SIN_HALLAZGOS_LLM,  # auditoría 3 (última)
         ]
     )
-    entradas = ["", "n", "", "n", ""]
+    # el hallazgo rojo pide una sola entrada por ciclo (cómo resolverlo)
+    entradas = ["", "", ""]
     orq, _ = crear_orquestador(provider, entradas, tmp_path)
 
     with pytest.raises(CoherenciaNoResueltaError, match="serverless-websockets"):

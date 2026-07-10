@@ -35,8 +35,11 @@ cuestiona y advierte, no solo genera.
 Secuencia: Análisis de documentos (opcional) → Entrevista → Auditoría → Construcción → Verificación → Entrega → Aprendizaje
 
 - **Ciclo de coherencia** (Auditoría → Entrevista): ante hallazgo, se repregunta al usuario
-  con la corrección propuesta. Repite hasta spec coherente o riesgo asumido explícitamente
-  (queda documentado en el ADR como riesgo aceptado).
+  con la corrección propuesta. La severidad define las opciones: un hallazgo **amarillo**
+  puede corregirse o asumirse explícitamente (queda documentado en el ADR como riesgo
+  aceptado y se advierte en la entrega); un hallazgo **rojo es bloqueante** — incluye las
+  reglas no negociables como secretos hardcodeados — y solo admite corregir o abortar.
+  Repite hasta spec coherente.
 - **Ciclo de corrección** (Verificación → Construcción): ante falla, informar + corregir +
   re-verificar. **Máximo 3 reintentos por componente**, luego escalar al usuario.
 - **Ciclo de corrección profunda** (Fase 7): ante falla de build/smoke, el corrector recibe

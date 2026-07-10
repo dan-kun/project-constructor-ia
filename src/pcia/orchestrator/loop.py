@@ -186,9 +186,14 @@ class Orquestador:
         """Ciclo de coherencia (Auditoría → Entrevista), acotado.
 
         Ante cada hallazgo se repregunta al usuario con la corrección
-        propuesta; puede corregir (vuelve por el Entrevistador) o asumir el
-        riesgo explícitamente (queda documentado en la spec). No se construye
-        sobre una spec con conflictos no resueltos.
+        propuesta. La severidad define qué puede hacer:
+
+        - 🟡 amarillo: corregir (vuelve por el Entrevistador) o asumir el
+          riesgo explícitamente (queda documentado en la spec).
+        - 🔴 rojo: bloqueante, no puede asumirse (incluye las reglas no
+          negociables, p. ej. secretos hardcodeados): corregir o abortar.
+
+        No se construye sobre una spec con conflictos no resueltos.
         """
         auditor = Auditor(self._provider)
         pendientes: list[Hallazgo] = []
@@ -232,16 +237,30 @@ class Orquestador:
 
     def _resolver_hallazgos(self, pendientes: list[Hallazgo]) -> None:
         for hallazgo in pendientes:
-            eleccion = self._entrada(
-                f"¿Asumís el riesgo '{hallazgo.id}'? (s = asumir / N = corregir) "
-            )
-            if eleccion.strip().lower().startswith("s"):
-                self.spec.riesgos_asumidos.append(f"{hallazgo.id}: {hallazgo.mensaje}")
-                self._salida(f"Riesgo asumido y documentado: {hallazgo.id}")
-                continue
-            detalle = self._entrada(
-                "¿Cómo lo querés resolver? (enter = aplicar la corrección propuesta) "
-            )
+            if hallazgo.severidad is Severidad.ROJO:
+                detalle = self._entrada(
+                    f"El hallazgo '{hallazgo.id}' es 🔴 bloqueante y no puede "
+                    "asumirse. ¿Cómo lo querés resolver? (enter = aplicar la "
+                    "corrección propuesta / 'abortar' = cancelar el proyecto) "
+                )
+                if normalizar(detalle) == "abortar":
+                    raise CoherenciaNoResueltaError(
+                        f"El usuario abortó ante el hallazgo bloqueante "
+                        f"'{hallazgo.id}'."
+                    )
+            else:
+                eleccion = self._entrada(
+                    f"¿Asumís el riesgo '{hallazgo.id}'? (s = asumir / N = corregir) "
+                )
+                if eleccion.strip().lower().startswith("s"):
+                    self.spec.riesgos_asumidos.append(
+                        f"{hallazgo.id}: {hallazgo.mensaje}"
+                    )
+                    self._salida(f"Riesgo asumido y documentado: {hallazgo.id}")
+                    continue
+                detalle = self._entrada(
+                    "¿Cómo lo querés resolver? (enter = aplicar la corrección propuesta) "
+                )
             respuesta = self._entrevistador.responder(
                 f"El Auditor encontró una incongruencia [{hallazgo.id}]: "
                 f"{hallazgo.mensaje} Corrección propuesta: "
@@ -392,6 +411,14 @@ class Orquestador:
         return profundos
 
     def _fase_entrega(self) -> Fase:
+        # Propagación del riesgo: lo asumido en la auditoría no queda solo en
+        # el ADR, se advierte en la entrega (y pesa en el estado final).
+        if self.spec.riesgos_asumidos:
+            lineas = "\n".join(f"  - {riesgo}" for riesgo in self.spec.riesgos_asumidos)
+            self._salida(
+                f"⚠️ El proyecto se entrega con "
+                f"{len(self.spec.riesgos_asumidos)} riesgo(s) asumido(s):\n{lineas}"
+            )
         registro = RegistroProyecto(
             fecha=dt.datetime.now().isoformat(timespec="seconds"),
             spec=self.spec,
