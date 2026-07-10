@@ -64,8 +64,9 @@ docs/              # DISENO.md (diseño completo y roadmap)
 - [x] Fase 6: Agente Analista de Documentos (`--docs`: extrae propuestas con evidencia de la documentación del cliente y precarga la entrevista)
 - [x] Fase 7: corrección acotada de fallas de build (contrato multi-archivo, máx. 2 ciclos, diagnósticos persistidos en el registro)
 - [x] Corridas reales end-to-end con LLM local (llama.cpp/Qwen3-30B): FastAPI ok; NestJS destapó el bug `npm ci` sin lockfile (corregido)
+- [x] Mejoras post-feedback de medio ciclo (75/100 + review externo): política de severidad (rojo bloqueante, amarillo asumible con propagación a la entrega), estado agregado de verificación (aprobado / con advertencias / inconcluso / fallido, chequeos obligatorios vs. opcionales), README con comandos determinísticos + chequeo de referencias a archivos, baseline de seguridad (SECRET_KEY obligatoria fail-fast, contenedores no-root, confirmación para Dockerfiles reescritos por el LLM), bloques condicionales en plantillas (PostgreSQL materializado en FastAPI: compose + deps + `db.py`, verificado en contenedor real), métricas en el registro (proveedor, duración) y matriz de capacidades en DISENO.md §8
 
-**Roadmap completo (7 fases).** Posibles próximos pasos: más plantillas/reglas, soporte PDF en el Analista, corridas reales con los otros dos adaptadores.
+**Roadmap completo (7 fases).** Posibles próximos pasos: casos de prueba pendientes con transcripts reales (Fase 7 en vivo, Odoo, adaptadores claude/openai), más condicionales (auth, otras bases), soporte PDF en el Analista, reglas candidatas del Aprendizaje al Auditor (con aprobación humana).
 
 ## Comandos
 

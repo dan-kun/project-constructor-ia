@@ -49,7 +49,10 @@ Secuencia: Análisis de documentos (opcional) → Entrevista → Auditoría → 
   diagnóstico queda persistido: si se repite entre proyectos del mismo stack, el defecto
   está en la plantilla (lección de la primera corrida real: `npm ci` sin lockfile).
 - **Ciclo de mejora continua** (Aprendizaje → próxima Entrevista): la memoria precarga
-  respuestas, acorta la entrevista y agrega reglas al Auditor.
+  respuestas y acorta la entrevista (consolidación determinística por frecuencias sobre
+  los registros). Derivar **reglas candidatas** para el Auditor a partir de la experiencia
+  es trabajo futuro: cada regla nueva requeriría aprobación humana antes de entrar a la
+  matriz (mismo principio de "decisiones de alto impacto las confirma el humano").
 - Mini-ciclo transversal: **toda salida LLM malformada se reintenta con el error como
   feedback** (máx. 3), es el mismo patrón de corrección a escala micro.
 
@@ -112,7 +115,23 @@ Consecuencias de diseño:
    entonces se escala directo. Criterio: un build roto por un defecto simple del scaffold se
    entrega en verde sin intervención humana, y el diagnóstico queda registrado en la memoria.
 
-## 8. Formato de salida del Entrevistador (contrato)
+## 8. Matriz de capacidades del catálogo de plantillas (estado actual)
+
+Qué materializa realmente cada plantilla. Lo que no figura acá se documenta en el README
+y el ADR (decisión trazable) pero **no modifica el scaffold** — el sistema no promete
+materializarlo, y decirlo explícitamente es parte del contrato con el usuario.
+
+| Stack | Scaffold base | Decisiones que modifican el scaffold | Verificaciones (obligatorias / opcionales) |
+|---|---|---|---|
+| FastAPI | API con `/health`, config fail-fast (`SECRET_KEY` obligatoria, sin default), Dockerfile no-root, tests (health + seguridad de config), CI GitHub Actions | `base_datos=postgresql` → `compose.yaml` (app + postgres 16 con healthcheck), dependencias SQLAlchemy/psycopg, módulo de conexión `db.py` | build Docker y smoke test con secreto inyectado (obligatorias); ruff (opcional) |
+| NestJS | API con módulo/controlador base, build multi-stage, imagen final no-root (`USER node`), CI | — (sin condicionales todavía) | build Docker y smoke del módulo compilado (obligatorias) |
+| Módulo Odoo | `__manifest__.py`, modelo, vistas, permisos CRUD básicos | — (sin condicionales todavía) | ruff (obligatoria: es la única verificación del stack — sin ruff el resultado queda "inconcluso") |
+
+No materializado en ningún stack (queda en README/ADR): autenticación (JWT/OAuth),
+arquitectura interna (hexagonal/capas), CI/CD distinto de GitHub Actions, otras bases de
+datos. Cada uno es un bloque condicional candidato para el roadmap.
+
+## 9. Formato de salida del Entrevistador (contrato)
 
 ```json
 {
