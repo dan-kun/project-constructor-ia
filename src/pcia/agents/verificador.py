@@ -4,8 +4,11 @@ Dos capas:
 
 - **Fase 4a — sintaxis**: verificación por extensión (py, json, yaml, toml,
   xml, csv) de todo archivo generado; lo que no tiene verificador se
-  reporta como ``omitido``. Ante una falla, ``corregir_archivo`` pide al
-  LLM la corrección mínima; el ciclo acotado lo maneja el orquestador.
+  reporta como ``omitido``. El README, generado por LLM, se chequea por
+  consistencia: toda ruta de archivo mencionada en sus bloques de código
+  debe existir en el scaffold (la documentación no puede inventar archivos).
+  Ante una falla, ``corregir_archivo`` pide al LLM la corrección mínima;
+  el ciclo acotado lo maneja el orquestador.
 - **Fase 4b — profunda**: builds en Docker, smoke tests dentro de la imagen
   y linters host-side, según lo que declare la plantilla del stack. Si la
   herramienta no está disponible (docker, linter), el chequeo se reporta
@@ -22,10 +25,11 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
 import yaml
@@ -49,6 +53,16 @@ MAX_DETALLE = 1500
 MAX_CONTENIDO_ARCHIVO = 4000
 # Archivos que no afectan builds: no gastan contexto del corrector.
 IRRELEVANTES_PARA_BUILD = ("README.md", "docs/")
+
+# Chequeo de consistencia del README (documentación generada por LLM):
+# toda ruta de archivo mencionada en sus bloques de código debe existir en
+# el scaffold. Solo cuentan tokens con estas extensiones; lo demás (binarios,
+# flags, módulos con ':') no es verificable y se ignora.
+EXTENSIONES_REFERENCIABLES = frozenset(
+    "py ts js json yaml yml toml md txt csv xml cfg ini example sh lock html css".split()
+)
+PATRON_BLOQUE_CODIGO = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
+PATRON_RUTA = re.compile(r"[\w.-]+(?:/[\w.-]+)*")
 
 
 class CorreccionArchivo(BaseModel):
@@ -139,6 +153,8 @@ class Verificador:
         return ResultadoVerificacion(chequeos=chequeos)
 
     def verificar_archivo(self, raiz: Path, relativa: str) -> Chequeo:
+        if relativa == "README.md":
+            return _chequear_referencias_readme(raiz, relativa)
         verificador = VERIFICADORES.get(Path(relativa).suffix.lower())
         if verificador is None:
             return Chequeo(
@@ -283,6 +299,41 @@ class Verificador:
                 cambio.contenido_corregido, encoding="utf-8"
             )
         return correccion
+
+
+def _referencias_a_archivos(texto: str) -> set[str]:
+    """Rutas de archivo mencionadas en los bloques de código de un markdown."""
+    referencias = set()
+    for bloque in PATRON_BLOQUE_CODIGO.findall(texto):
+        for token in re.split(r"""[\s`'"()\[\]{},;=]+""", bloque):
+            if ":" in token:  # URLs, módulos python:objeto, scripts npm
+                continue
+            limpio = token[2:] if token.startswith("./") else token
+            sufijo = PurePosixPath(limpio).suffix.lstrip(".").lower()
+            if sufijo in EXTENSIONES_REFERENCIABLES and PATRON_RUTA.fullmatch(limpio):
+                referencias.add(limpio)
+    return referencias
+
+
+def _chequear_referencias_readme(raiz: Path, relativa: str) -> Chequeo:
+    """El README no puede referenciar archivos que no existen en el scaffold."""
+    texto = (raiz / relativa).read_text(encoding="utf-8")
+    referencias = _referencias_a_archivos(texto)
+    faltantes = sorted(r for r in referencias if not (raiz / r).exists())
+    if faltantes:
+        return Chequeo(
+            archivo=relativa,
+            estado="error",
+            detalle=(
+                "referencia archivos que no existen en el scaffold: "
+                + ", ".join(faltantes)
+            ),
+        )
+    return Chequeo(
+        archivo=relativa,
+        estado="ok",
+        detalle=f"{len(referencias)} referencia(s) a archivos verificadas",
+    )
 
 
 def _binario_disponible(nombre: str) -> bool:

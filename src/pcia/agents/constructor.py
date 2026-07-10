@@ -57,6 +57,10 @@ class Plantilla(BaseModel):
     detecta: list[str] = Field(min_length=1)
     archivos: dict[str, str] = Field(min_length=1)
     verificaciones: list[VerificacionProfunda] = Field(default_factory=list)
+    # Sección "Cómo ejecutar" del README: comandos determinísticos de la
+    # plantilla. El LLM redacta contexto y decisiones, nunca instrucciones
+    # operativas (un LLM puede inventar comandos sobre archivos que no existen).
+    instrucciones: str = ""
 
 
 class DocsGeneradas(BaseModel):
@@ -107,9 +111,12 @@ class Constructor:
         plantilla = self._seleccionar(spec)
         _validar_destino(destino)
 
-        archivos, verificaciones = _renderizar(plantilla, spec)
+        archivos, verificaciones, instrucciones = _renderizar(plantilla, spec)
         docs = self._generar_docs(spec, plantilla, sorted(archivos))
-        archivos["README.md"] = docs.readme_markdown
+        readme = docs.readme_markdown.rstrip() + "\n"
+        if instrucciones:
+            readme += "\n" + instrucciones.rstrip() + "\n"
+        archivos["README.md"] = readme
         archivos[RUTA_ADR] = docs.adr_markdown
 
         for relativa, contenido in archivos.items():
@@ -170,7 +177,7 @@ class Constructor:
 
 def _renderizar(
     plantilla: Plantilla, spec: ProjectSpec
-) -> tuple[dict[str, str], list[VerificacionProfunda]]:
+) -> tuple[dict[str, str], list[VerificacionProfunda], str]:
     nombre = spec.nombre or "proyecto"
     tokens = {
         "[[NOMBRE]]": nombre,
@@ -199,7 +206,7 @@ def _renderizar(
         )
         for verificacion in plantilla.verificaciones
     ]
-    return archivos, verificaciones
+    return archivos, verificaciones, render(plantilla.instrucciones)
 
 
 def _validar_destino(destino: Path) -> None:

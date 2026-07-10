@@ -17,6 +17,29 @@ verificaciones:
     requiere: ruff
     obligatoria: false
     comando: ["ruff", "check", "src", "tests"]
+# Sección "Cómo ejecutar" del README: comandos determinísticos (el LLM no
+# escribe instrucciones operativas, solo contexto y decisiones).
+instrucciones: |
+  ## Cómo ejecutar
+
+  ```bash
+  pip install -e ".[dev]"                    # instalar en modo desarrollo
+  uvicorn [[PAQUETE]].main:app --reload      # servidor en http://localhost:8000
+  pytest                                     # correr los tests
+  ```
+
+  ### Docker
+
+  ```bash
+  docker build -t [[NOMBRE_KEBAB]] .
+  docker run --rm -p 8000:8000 [[NOMBRE_KEBAB]]
+  ```
+
+  ### Configuración
+
+  Copiar `.env.example` a `.env` y completar los valores.
+  Nunca commitear secretos reales.
+
 archivos:
   "pyproject.toml": |
     [build-system]

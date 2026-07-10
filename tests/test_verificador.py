@@ -37,13 +37,73 @@ def test_proyecto_valido_aprueba(tmp_path):
 
 
 def test_archivos_sin_verificador_se_omiten_y_no_bloquean(tmp_path):
-    escribir(tmp_path, "README.md", "# hola")
+    escribir(tmp_path, "docs/notas.md", "# hola")
     escribir(tmp_path, "src/main.ts", "const x: número =")  # ni se intenta
 
     resultado = crear_verificador().verificar(tmp_path)
 
     assert resultado.aprobado()
     assert {c.estado for c in resultado.chequeos} == {"omitido"}
+    # omitidos por diseño: no obligatorios, no dejan el estado inconcluso
+    assert not any(c.obligatorio for c in resultado.chequeos)
+
+
+# --- consistencia del README (referencias a archivos) ----------------------------
+
+
+def test_readme_con_referencias_existentes_aprueba(tmp_path):
+    escribir(tmp_path, "pyproject.toml", '[project]\nname = "x"\n')
+    escribir(tmp_path, ".env.example", "APP_ENV=dev\n")
+    escribir(
+        tmp_path,
+        "README.md",
+        "# demo\n\nConfigurar `.env.example`.\n\n```bash\n"
+        "pip install -e .\npytest\ncat pyproject.toml\n```\n",
+    )
+
+    chequeo = crear_verificador().verificar_archivo(tmp_path, "README.md")
+
+    assert chequeo.estado == "ok"
+    assert "2 referencia(s)" in chequeo.detalle
+
+
+def test_readme_que_referencia_archivos_inexistentes_falla(tmp_path):
+    escribir(
+        tmp_path,
+        "README.md",
+        "# demo\n\n```bash\npip install -r requirements.txt\n"
+        "docker-compose up\n```\n\nVer `docker-compose.yml`.\n",
+    )
+
+    chequeo = crear_verificador().verificar_archivo(tmp_path, "README.md")
+
+    assert chequeo.estado == "error"
+    assert "docker-compose.yml" in chequeo.detalle
+    assert "requirements.txt" in chequeo.detalle
+
+
+def test_referencias_ignoran_urls_modulos_y_comandos(tmp_path):
+    escribir(
+        tmp_path,
+        "README.md",
+        "# demo\n\n```bash\n"
+        "uvicorn mi_api.main:app --reload   # http://localhost:8000\n"
+        "npm run start:dev\nnpm install\n```\n",
+    )
+
+    chequeo = crear_verificador().verificar_archivo(tmp_path, "README.md")
+
+    assert chequeo.estado == "ok"
+    assert "0 referencia(s)" in chequeo.detalle
+
+
+def test_referencias_solo_cuentan_dentro_de_bloques_de_codigo(tmp_path):
+    # la prosa puede nombrar tecnologías tipo Node.js sin que sean archivos
+    escribir(tmp_path, "README.md", "# demo\n\nHecho con Node.js y FastAPI.\n")
+
+    chequeo = crear_verificador().verificar_archivo(tmp_path, "README.md")
+
+    assert chequeo.estado == "ok"
 
 
 @pytest.mark.parametrize(

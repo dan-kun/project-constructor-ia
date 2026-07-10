@@ -23,11 +23,15 @@ es redactar la documentación específica del proyecto: el `README.md` y el
 
 - Título con el nombre del proyecto y la descripción.
 - Stack elegido (lenguaje, framework, base de datos, infraestructura).
-- Cómo levantar el proyecto en desarrollo y cómo correr los tests, con los
-  comandos reales del stack generado.
 - Estructura de archivos generada, brevemente explicada.
 - Sección de configuración: mencionar `.env.example` si existe y recordar que
   los secretos nunca se commitean.
+- **NO escribas comandos de instalación ni de ejecución**: la sección
+  "Cómo ejecutar" se agrega automáticamente desde la plantilla con los
+  comandos reales del stack. Un comando inventado sobre un archivo que no
+  existe es peor que ningún comando.
+- **NO menciones archivos que no estén en el listado del scaffold**: el
+  Verificador rechaza READMEs que referencian archivos inexistentes.
 
 **ADR-001** (`adr_markdown`):
 

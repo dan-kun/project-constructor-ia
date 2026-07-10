@@ -149,6 +149,20 @@ def test_prompt_del_llm_incluye_spec_stack_archivos_y_riesgos(tmp_path):
 def test_las_plantillas_del_paquete_cargan_y_validan():
     plantillas = cargar_plantillas()
     assert {p.stack for p in plantillas} == {"fastapi", "nestjs", "odoo"}
+    # toda plantilla trae su sección de instrucciones determinística
+    assert all(p.instrucciones for p in plantillas)
+
+
+def test_readme_combina_texto_del_llm_con_instrucciones_de_la_plantilla(tmp_path):
+    destino = tmp_path / "proyecto"
+    construir(spec_para("fastapi"), destino)
+
+    readme = (destino / "README.md").read_text(encoding="utf-8")
+    # primero el contexto redactado por el LLM, después los comandos reales
+    assert readme.startswith("# Mi Ápi")
+    assert "## Cómo ejecutar" in readme
+    assert "uvicorn mi_api.main:app --reload" in readme  # tokens renderizados
+    assert "docker build -t mi-api ." in readme
 
 
 def test_resultado_incluye_verificaciones_renderizadas(tmp_path):

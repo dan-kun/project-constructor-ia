@@ -11,6 +11,30 @@ verificaciones:
   - id: smoke-modulo
     tipo: docker_run
     comando: ["node", "-e", "require('./dist/app.module.js')"]
+# Sección "Cómo ejecutar" del README: comandos determinísticos (el LLM no
+# escribe instrucciones operativas, solo contexto y decisiones).
+instrucciones: |
+  ## Cómo ejecutar
+
+  ```bash
+  npm install                # instalar dependencias
+  npm run start:dev          # servidor en desarrollo (http://localhost:3000)
+  npm test                   # correr los tests
+  npm run build              # compilar a dist/
+  ```
+
+  ### Docker
+
+  ```bash
+  docker build -t [[NOMBRE_KEBAB]] .
+  docker run --rm -p 3000:3000 [[NOMBRE_KEBAB]]
+  ```
+
+  ### Configuración
+
+  Copiar `.env.example` a `.env` y completar los valores.
+  Nunca commitear secretos reales.
+
 archivos:
   "package.json": |
     {
