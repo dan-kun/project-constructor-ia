@@ -5,7 +5,9 @@ stack: odoo
 descripcion: Módulo de Odoo (Python)
 detecta: [odoo]
 verificaciones:
-  # sin Dockerfile propio: el módulo se monta en una instancia de Odoo
+  # sin Dockerfile propio: el módulo se monta en una instancia de Odoo.
+  # ruff es la única verificación del stack: se mantiene obligatoria para
+  # que sin ruff instalado el resultado quede "inconcluso", no "aprobado".
   - id: lint-ruff
     tipo: comando
     requiere: ruff

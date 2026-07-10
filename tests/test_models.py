@@ -140,3 +140,50 @@ def test_verificacion_profunda_con_error_tampoco_aprueba():
     )
     assert not resultado.aprobado()
     assert resultado.errores() == [build_roto]
+
+
+# --- estado agregado de la verificación ------------------------------------------
+
+
+def test_estado_aprobado_con_todo_ok():
+    resultado = ResultadoVerificacion(
+        chequeos=[Chequeo(archivo="a.py", estado="ok")],
+        profundos=[Chequeo(archivo="docker-build", estado="ok")],
+    )
+    assert resultado.estado() == "aprobado"
+
+
+def test_estado_fallido_con_cualquier_error():
+    resultado = ResultadoVerificacion(
+        profundos=[Chequeo(archivo="docker-build", estado="error", detalle="build roto")]
+    )
+    assert resultado.estado() == "fallido"
+
+
+def test_omitido_obligatorio_deja_el_estado_inconcluso():
+    resultado = ResultadoVerificacion(
+        profundos=[
+            Chequeo(archivo="docker-build", estado="omitido", detalle="sin docker"),
+            Chequeo(archivo="lint", estado="omitido", obligatorio=False),
+        ]
+    )
+    assert resultado.estado() == "inconcluso"
+
+
+def test_omitido_opcional_solo_degrada_a_advertencias():
+    resultado = ResultadoVerificacion(
+        profundos=[
+            Chequeo(archivo="docker-build", estado="ok"),
+            Chequeo(archivo="lint", estado="omitido", obligatorio=False),
+        ]
+    )
+    assert resultado.estado() == "aprobado_con_advertencias"
+
+
+def test_omitidos_de_sintaxis_no_pesan_en_el_estado():
+    # un .md sin verificador de sintaxis es omitido por diseño
+    resultado = ResultadoVerificacion(
+        chequeos=[Chequeo(archivo="b.md", estado="omitido", obligatorio=False)],
+        profundos=[Chequeo(archivo="docker-build", estado="ok")],
+    )
+    assert resultado.estado() == "aprobado"

@@ -143,6 +143,9 @@ class VerificacionProfunda(BaseModel):
     tipo: Literal["docker_build", "docker_run", "comando"]
     comando: list[str] = Field(default_factory=list)
     requiere: str | None = None
+    # Si un chequeo obligatorio no puede correrse (herramienta ausente), el
+    # resultado queda "inconcluso"; uno opcional omitido solo advierte.
+    obligatoria: bool = True
 
 
 class ResultadoConstruccion(BaseModel):
@@ -160,6 +163,15 @@ class Chequeo(BaseModel):
     archivo: str
     estado: Literal["ok", "error", "omitido"]
     detalle: str = ""
+    # Un "omitido" solo pesa en el estado agregado si el chequeo era
+    # obligatorio (los omitidos por diseño, p. ej. un .md sin verificador
+    # de sintaxis, se marcan como no obligatorios).
+    obligatorio: bool = True
+
+
+EstadoVerificacion = Literal[
+    "aprobado", "aprobado_con_advertencias", "inconcluso", "fallido"
+]
 
 
 class ResultadoVerificacion(BaseModel):
@@ -179,6 +191,22 @@ class ResultadoVerificacion(BaseModel):
     def aprobado(self) -> bool:
         return not self.errores()
 
+    def estado(self) -> EstadoVerificacion:
+        """Estado agregado: "omitido" no cuenta como aprobado.
+
+        Un chequeo obligatorio que no pudo correrse (p. ej. docker ausente)
+        deja el resultado "inconcluso"; uno opcional omitido (p. ej. un
+        linter no instalado) solo degrada a "aprobado_con_advertencias".
+        """
+        if self.errores():
+            return "fallido"
+        omitidos = [c for c in self.profundos if c.estado == "omitido"]
+        if any(c.obligatorio for c in omitidos):
+            return "inconcluso"
+        if omitidos:
+            return "aprobado_con_advertencias"
+        return "aprobado"
+
 
 class ResolucionHallazgo(BaseModel):
     """Cómo terminó un hallazgo de auditoría: corregido o riesgo asumido."""
@@ -196,6 +224,9 @@ class RegistroProyecto(BaseModel):
     ruta_proyecto: str | None = None
     resoluciones: list[ResolucionHallazgo] = Field(default_factory=list)
     verificacion: ResultadoVerificacion | None = None
+    # Estado agregado de la entrega: verificación + riesgos asumidos
+    # (un riesgo amarillo asumido degrada "aprobado" a "con advertencias").
+    estado_final: EstadoVerificacion | None = None
     # Diagnósticos del corrector de builds (Fase 7): si un diagnóstico se
     # repite entre proyectos del mismo stack, el defecto está en la plantilla.
     correcciones_build: list[str] = Field(default_factory=list)

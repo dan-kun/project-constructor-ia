@@ -27,7 +27,7 @@ cuestiona y advierte, no solo genera.
 | Entrevistador | Elicitación adaptativa de requisitos | LLM con salida JSON estricta: `{message_to_user, updates, done}`; deriva preguntas del estado de la spec |
 | Auditor | Detección de incongruencias técnicas | **Híbrido**: matriz de reglas determinísticas (YAML) + análisis LLM para lo no catalogado. Salida: hallazgos con severidad (verde/amarillo/rojo) y corrección propuesta |
 | Constructor | Genera scaffold, configs, docs, ADRs | Plantillas por stack + LLM para lo específico. Fase 3: FastAPI, módulo Odoo, NestJS |
-| Verificador | Valida lo construido | Fase 4a: parseo de sintaxis (yaml/toml/json/py). Fase 4b: builds en Docker, linters, smoke tests. Fase 7: corrección multi-archivo de fallas de build (ciclo acotado) |
+| Verificador | Valida lo construido | Fase 4a: parseo de sintaxis (yaml/toml/json/py). Fase 4b: builds en Docker, linters, smoke tests. Fase 7: corrección multi-archivo de fallas de build (ciclo acotado). La entrega tiene estado agregado: **aprobado / aprobado con advertencias / inconcluso / fallido** — un chequeo obligatorio que no pudo correrse (p. ej. sin Docker) deja "inconcluso", nunca "aprobado"; un linter opcional ausente o un riesgo asumido degradan a "con advertencias" |
 | Aprendizaje | Persiste y consolida experiencia | Registra spec final, hallazgos, resoluciones, fallas por stack, feedback del usuario |
 
 ## 4. Ciclos (orquestación)

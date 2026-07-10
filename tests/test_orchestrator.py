@@ -117,6 +117,9 @@ def test_ciclo_completo_guarda_spec_y_genera_proyecto(tmp_path):
     # capa profunda: sin docker/linters en el entorno de test, todo omitido
     assert any("docker no está disponible" in s for s in salidas)
     assert registro["verificacion"]["profundos"]
+    # omitidos obligatorios (docker) ⇒ el estado agregado es inconcluso
+    assert registro["estado_final"] == "inconcluso"
+    assert any("Estado final de la entrega: ❓ inconcluso" in s for s in salidas)
     assert any("Especificación y registro" in s for s in salidas)
     assert any("Memoria actualizada" in s for s in salidas)
 
@@ -436,6 +439,52 @@ def test_verificacion_profunda_ok_entrega_normalmente(tmp_path, monkeypatch):
     assert estados["docker-build"] == "ok"
     assert estados["smoke-import-app"] == "ok"
     assert any("Verificación profunda" in s for s in salidas)
+    # docker y ruff simulados ok ⇒ aprobado pleno
+    assert registro["estado_final"] == "aprobado"
+
+
+def test_linter_opcional_ausente_degrada_a_advertencias(tmp_path, monkeypatch):
+    from pcia.agents import verificador as modulo_verificador
+
+    simular_docker(monkeypatch, codigos={})
+    # docker presente, ruff ausente: el linter opcional queda omitido
+    monkeypatch.setattr(
+        modulo_verificador, "_binario_disponible", lambda nombre: nombre == "docker"
+    )
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
+        ]
+    )
+    orq, salidas = crear_orquestador(provider, ["", str(tmp_path / "proyecto")], tmp_path)
+
+    ruta = orq.ejecutar()
+
+    registro = json.loads(ruta.read_text(encoding="utf-8"))
+    assert registro["estado_final"] == "aprobado_con_advertencias"
+    assert any("omitido (opcional)" in s for s in salidas)
+
+
+def test_riesgo_asumido_degrada_el_estado_final(tmp_path, monkeypatch):
+    simular_docker(monkeypatch, codigos={})  # verificación en verde pleno
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_SIN_AUTH, done=True),
+            SIN_HALLAZGOS_LLM,  # auditoría 1: dispara api-sin-autenticacion
+            SIN_HALLAZGOS_LLM,  # auditoría 2: el riesgo asumido ya no se reporta
+            DOCS_LLM,
+        ]
+    )
+    orq, _ = crear_orquestador(provider, ["", "s", str(tmp_path / "proyecto")], tmp_path)
+
+    ruta = orq.ejecutar()
+
+    registro = json.loads(ruta.read_text(encoding="utf-8"))
+    # la verificación aprobó, pero el riesgo asumido pesa en la entrega
+    assert registro["verificacion"]["profundos"]
+    assert registro["estado_final"] == "aprobado_con_advertencias"
 
 
 CORRECCION_BUILD = json.dumps(

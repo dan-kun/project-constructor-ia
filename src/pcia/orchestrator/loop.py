@@ -21,6 +21,7 @@ from pcia.agents.llm_json import ContratoInvalidoError
 from pcia.agents.verificador import Verificador
 from pcia.domain.models import (
     Chequeo,
+    EstadoVerificacion,
     Hallazgo,
     ProjectSpec,
     RegistroProyecto,
@@ -48,6 +49,13 @@ EMOJI_SEMAFORO = {
     Severidad.VERDE: "🟢",
     Severidad.AMARILLO: "🟡",
     Severidad.ROJO: "🔴",
+}
+
+EMOJI_ESTADO_FINAL = {
+    "aprobado": "✅",
+    "aprobado_con_advertencias": "⚠️",
+    "inconcluso": "❓",
+    "fallido": "❌",
 }
 
 
@@ -410,6 +418,13 @@ class Orquestador:
             self._salida(_formatear_profundos(profundos))
         return profundos
 
+    def _estado_final(self) -> EstadoVerificacion:
+        """Estado agregado de la entrega: verificación + riesgos asumidos."""
+        estado = self._verificacion.estado() if self._verificacion else "inconcluso"
+        if estado == "aprobado" and self.spec.riesgos_asumidos:
+            return "aprobado_con_advertencias"
+        return estado
+
     def _fase_entrega(self) -> Fase:
         # Propagación del riesgo: lo asumido en la auditoría no queda solo en
         # el ADR, se advierte en la entrega (y pesa en el estado final).
@@ -419,6 +434,11 @@ class Orquestador:
                 f"⚠️ El proyecto se entrega con "
                 f"{len(self.spec.riesgos_asumidos)} riesgo(s) asumido(s):\n{lineas}"
             )
+        estado_final = self._estado_final()
+        self._salida(
+            "Estado final de la entrega: "
+            f"{EMOJI_ESTADO_FINAL[estado_final]} {estado_final.replace('_', ' ')}"
+        )
         registro = RegistroProyecto(
             fecha=dt.datetime.now().isoformat(timespec="seconds"),
             spec=self.spec,
@@ -426,6 +446,7 @@ class Orquestador:
             ruta_proyecto=str(self.ruta_proyecto) if self.ruta_proyecto else None,
             resoluciones=self.resoluciones,
             verificacion=self._verificacion,
+            estado_final=estado_final,
             correcciones_build=self.correcciones_build,
         )
         self.ruta_spec = self._memoria.guardar(registro)
@@ -480,7 +501,10 @@ def _formatear_profundos(profundos: list[Chequeo]) -> str:
     iconos = {"ok": "✅", "error": "❌", "omitido": "⏭️"}
     lineas = ["Resultado de la verificación profunda:"]
     for chequeo in profundos:
-        linea = f"{iconos[chequeo.estado]} [{chequeo.archivo}] {chequeo.estado}"
+        estado = chequeo.estado
+        if estado == "omitido" and not chequeo.obligatorio:
+            estado += " (opcional)"
+        linea = f"{iconos[chequeo.estado]} [{chequeo.archivo}] {estado}"
         if chequeo.detalle:
             linea += f" — {chequeo.detalle}"
         lineas.append(linea)

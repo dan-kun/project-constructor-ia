@@ -145,6 +145,7 @@ class Verificador:
                 archivo=relativa,
                 estado="omitido",
                 detalle="sin verificador de sintaxis para esta extensión (Fase 4b)",
+                obligatorio=False,  # omitido por diseño, no por falta de herramientas
             )
         try:
             verificador((raiz / relativa).read_text(encoding="utf-8"))
@@ -159,20 +160,16 @@ class Verificador:
         etiqueta_imagen: str,
     ) -> list[Chequeo]:
         """Corre los chequeos profundos declarados por la plantilla (Fase 4b)."""
-        chequeos = []
+        chequeos: list[Chequeo] = []
         imagen_construida = False
         for verificacion in verificaciones:
             if verificacion.tipo in ("docker_build", "docker_run") and not _binario_disponible("docker"):
-                chequeos.append(
-                    Chequeo(
-                        archivo=verificacion.id,
-                        estado="omitido",
-                        detalle="docker no está disponible en este entorno",
-                    )
+                chequeo = Chequeo(
+                    archivo=verificacion.id,
+                    estado="omitido",
+                    detalle="docker no está disponible en este entorno",
                 )
-                continue
-
-            if verificacion.tipo == "docker_build":
+            elif verificacion.tipo == "docker_build":
                 chequeo = _correr(
                     verificacion.id,
                     ["docker", "build", "-t", etiqueta_imagen, "."],
@@ -180,38 +177,34 @@ class Verificador:
                     TIMEOUT_BUILD_SEGUNDOS,
                 )
                 imagen_construida = chequeo.estado == "ok"
-                chequeos.append(chequeo)
             elif verificacion.tipo == "docker_run":
                 if not imagen_construida:
-                    chequeos.append(
-                        Chequeo(
-                            archivo=verificacion.id,
-                            estado="omitido",
-                            detalle="requiere una imagen construida (docker_build ok)",
-                        )
+                    chequeo = Chequeo(
+                        archivo=verificacion.id,
+                        estado="omitido",
+                        detalle="requiere una imagen construida (docker_build ok)",
                     )
-                    continue
-                chequeos.append(
-                    _correr(
+                else:
+                    chequeo = _correr(
                         verificacion.id,
                         ["docker", "run", "--rm", etiqueta_imagen, *verificacion.comando],
                         raiz,
                         TIMEOUT_COMANDO_SEGUNDOS,
                     )
-                )
-            else:  # comando host-side (linters opcionales)
+            else:  # comando host-side (linters)
                 if verificacion.requiere and not _binario_disponible(verificacion.requiere):
-                    chequeos.append(
-                        Chequeo(
-                            archivo=verificacion.id,
-                            estado="omitido",
-                            detalle=f"'{verificacion.requiere}' no está disponible en este entorno",
-                        )
+                    chequeo = Chequeo(
+                        archivo=verificacion.id,
+                        estado="omitido",
+                        detalle=f"'{verificacion.requiere}' no está disponible en este entorno",
                     )
-                    continue
-                chequeos.append(
-                    _correr(verificacion.id, verificacion.comando, raiz, TIMEOUT_COMANDO_SEGUNDOS)
-                )
+                else:
+                    chequeo = _correr(
+                        verificacion.id, verificacion.comando, raiz, TIMEOUT_COMANDO_SEGUNDOS
+                    )
+            chequeos.append(
+                chequeo.model_copy(update={"obligatorio": verificacion.obligatoria})
+            )
 
         if imagen_construida:
             # Limpieza best-effort de la imagen de verificación.

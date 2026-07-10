@@ -10,9 +10,12 @@ verificaciones:
   - id: smoke-import-app
     tipo: docker_run
     comando: ["python", "-c", "import [[PAQUETE]].main"]
+  # opcional: el build y el smoke test son la garantía; sin ruff instalado
+  # el resultado queda "aprobado con advertencias", no "inconcluso"
   - id: lint-ruff
     tipo: comando
     requiere: ruff
+    obligatoria: false
     comando: ["ruff", "check", "src", "tests"]
 archivos:
   "pyproject.toml": |
