@@ -49,6 +49,31 @@ class DestinoInvalidoError(ConstruccionError):
     """El directorio destino no puede usarse (por ejemplo, no está vacío)."""
 
 
+class CondicionActivacion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    campo: str
+    contiene: list[str] = Field(min_length=1)
+
+
+class Condicional(BaseModel):
+    """Bloque de plantilla que solo se materializa si la spec lo pide.
+
+    Es el mecanismo por el que una decisión de la entrevista modifica
+    realmente el scaffold (p. ej. ``base_datos=postgresql`` agrega el
+    compose, las dependencias y el módulo de conexión). ``archivos`` suma
+    archivos nuevos; ``fragmentos`` inyecta contenido en tokens
+    ``[[ASI]]`` de los archivos base (vacíos si el bloque no activa).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    cuando: CondicionActivacion
+    archivos: dict[str, str] = Field(default_factory=dict)
+    fragmentos: dict[str, str] = Field(default_factory=dict)
+
+
 class Plantilla(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -57,6 +82,7 @@ class Plantilla(BaseModel):
     detecta: list[str] = Field(min_length=1)
     archivos: dict[str, str] = Field(min_length=1)
     verificaciones: list[VerificacionProfunda] = Field(default_factory=list)
+    condicionales: list[Condicional] = Field(default_factory=list)
     # Sección "Cómo ejecutar" del README: comandos determinísticos de la
     # plantilla. El LLM redacta contexto y decisiones, nunca instrucciones
     # operativas (un LLM puede inventar comandos sobre archivos que no existen).
@@ -75,16 +101,35 @@ class DocsGeneradas(BaseModel):
 def cargar_plantillas(directorio: Path = RUTA_TEMPLATES) -> list[Plantilla]:
     """Carga y valida las plantillas (falla temprano si están mal escritas)."""
     plantillas = []
+    campos_spec = ProjectSpec.campos_validos()
     for ruta in sorted(directorio.glob("*.yaml")):
         plantilla = Plantilla.model_validate(
             yaml.safe_load(ruta.read_text(encoding="utf-8"))
         )
-        for relativa in plantilla.archivos:
+        rutas_declaradas = [
+            *plantilla.archivos,
+            *(r for c in plantilla.condicionales for r in c.archivos),
+        ]
+        for relativa in rutas_declaradas:
             pura = PurePosixPath(relativa)
             if pura.is_absolute() or ".." in pura.parts:
                 raise ValueError(
                     f"Plantilla '{plantilla.stack}': ruta insegura {relativa!r}"
                 )
+        for condicional in plantilla.condicionales:
+            if condicional.cuando.campo not in campos_spec:
+                raise ValueError(
+                    f"Plantilla '{plantilla.stack}': el condicional "
+                    f"'{condicional.id}' usa un campo desconocido de la spec: "
+                    f"{condicional.cuando.campo!r}"
+                )
+            for token in condicional.fragmentos:
+                if not re.fullmatch(r"\[\[[A-Z_]+\]\]", token):
+                    raise ValueError(
+                        f"Plantilla '{plantilla.stack}': el condicional "
+                        f"'{condicional.id}' declara un fragmento con token "
+                        f"inválido: {token!r} (formato esperado: [[ASI]])"
+                    )
         for verificacion in plantilla.verificaciones:
             if verificacion.tipo != "docker_build" and not verificacion.comando:
                 raise ValueError(
@@ -175,6 +220,16 @@ class Constructor:
         return docs
 
 
+def _condicional_activo(condicional: Condicional, spec: ProjectSpec) -> bool:
+    valor = getattr(spec, condicional.cuando.campo)
+    if isinstance(valor, list):
+        valor = " ".join(valor)
+    if not valor:
+        return False
+    texto = normalizar(valor)
+    return any(normalizar(palabra) in texto for palabra in condicional.cuando.contiene)
+
+
 def _renderizar(
     plantilla: Plantilla, spec: ProjectSpec
 ) -> tuple[dict[str, str], list[VerificacionProfunda], str]:
@@ -185,8 +240,19 @@ def _renderizar(
         "[[PAQUETE]]": slug_snake(nombre),
         "[[DESCRIPCION]]": spec.descripcion or "",
     }
+    activos = [c for c in plantilla.condicionales if _condicional_activo(c, spec)]
+    # Todo fragmento declarado arranca vacío (el token desaparece si su
+    # condicional no activa); los activos suman su contenido en orden.
+    fragmentos = {
+        token: "" for c in plantilla.condicionales for token in c.fragmentos
+    }
+    for condicional in activos:
+        for token, contenido in condicional.fragmentos.items():
+            fragmentos[token] += contenido
 
     def render(texto: str) -> str:
+        for token, valor in fragmentos.items():
+            texto = texto.replace(token, valor)
         for token, valor in tokens.items():
             texto = texto.replace(token, valor)
         resto = TOKEN_SIN_REEMPLAZAR.search(texto)
@@ -200,6 +266,15 @@ def _renderizar(
     archivos = {
         render(ruta): render(contenido) for ruta, contenido in plantilla.archivos.items()
     }
+    for condicional in activos:
+        for ruta, contenido in condicional.archivos.items():
+            ruta_render = render(ruta)
+            if ruta_render in archivos:
+                raise ConstruccionError(
+                    f"El condicional '{condicional.id}' de la plantilla "
+                    f"'{plantilla.stack}' pisa el archivo {ruta_render!r}"
+                )
+            archivos[ruta_render] = render(contenido)
     verificaciones = [
         verificacion.model_copy(
             update={"comando": [render(parte) for parte in verificacion.comando]}

@@ -63,14 +63,81 @@ def test_scaffold_fastapi_completo(tmp_path):
     assert 'description = "Gestión de turnos"' in pyproject
 
 
-def test_no_quedan_tokens_sin_reemplazar(tmp_path):
+@pytest.mark.parametrize("base_datos", ["postgresql", "ninguna"])
+def test_no_quedan_tokens_sin_reemplazar(tmp_path, base_datos):
     destino = tmp_path / "proyecto"
-    construir(spec_para("fastapi"), destino)
+    construir(spec_para("fastapi", base_datos=base_datos), destino)
     for archivo in destino.rglob("*"):
         if archivo.is_file():
             contenido = archivo.read_text(encoding="utf-8")
             assert not re.search(r"\[\[[A-Z_]+\]\]", contenido), archivo
             assert "[[" not in str(archivo.relative_to(destino))
+
+
+# --- bloques condicionales (la spec modifica el scaffold) -------------------------
+
+
+def test_postgresql_materializa_compose_dependencias_y_conexion(tmp_path):
+    destino = tmp_path / "proyecto"
+    construir(spec_para("fastapi", base_datos="PostgreSQL 16"), destino)
+
+    assert (destino / "compose.yaml").exists()
+    assert (destino / "src/mi_api/db.py").exists()
+    pyproject = (destino / "pyproject.toml").read_text(encoding="utf-8")
+    assert "sqlalchemy" in pyproject and "psycopg" in pyproject
+    env = (destino / ".env.example").read_text(encoding="utf-8")
+    assert "DATABASE_URL=postgresql+psycopg://" in env
+    readme = (destino / "README.md").read_text(encoding="utf-8")
+    assert "docker compose up -d db" in readme
+    # el módulo de conexión quedó con el paquete renderizado
+    db = (destino / "src/mi_api/db.py").read_text(encoding="utf-8")
+    assert "localhost:5432/mi_api" in db
+
+
+def test_sin_postgresql_no_se_materializa_nada_de_base_de_datos(tmp_path):
+    destino = tmp_path / "proyecto"
+    construir(spec_para("fastapi", base_datos="ninguna"), destino)
+
+    assert not (destino / "compose.yaml").exists()
+    assert not (destino / "src/mi_api/db.py").exists()
+    pyproject = (destino / "pyproject.toml").read_text(encoding="utf-8")
+    assert "sqlalchemy" not in pyproject
+    readme = (destino / "README.md").read_text(encoding="utf-8")
+    assert "compose" not in readme
+
+
+def test_condicional_con_campo_desconocido_falla_temprano(tmp_path):
+    ruta = tmp_path / "mala.yaml"
+    ruta.write_text(
+        "stack: mala\n"
+        "detecta: [mala]\n"
+        "condicionales:\n"
+        "  - id: x\n"
+        "    cuando: {campo: inexistente, contiene: [algo]}\n"
+        "archivos:\n"
+        '  "a.txt": contenido\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="campo desconocido"):
+        cargar_plantillas(tmp_path)
+
+
+def test_condicional_con_token_invalido_falla_temprano(tmp_path):
+    ruta = tmp_path / "mala.yaml"
+    ruta.write_text(
+        "stack: mala\n"
+        "detecta: [mala]\n"
+        "condicionales:\n"
+        "  - id: x\n"
+        "    cuando: {campo: base_datos, contiene: [algo]}\n"
+        "    fragmentos:\n"
+        '      "minusculas": contenido\n'
+        "archivos:\n"
+        '  "a.txt": contenido\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="token"):
+        cargar_plantillas(tmp_path)
 
 
 def test_scaffold_odoo(tmp_path):

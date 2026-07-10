@@ -40,6 +40,85 @@ instrucciones: |
 
   Copiar `.env.example` a `.env` y completar los valores.
   Nunca commitear secretos reales.
+  [[INSTRUCCIONES_EXTRA]]
+# Bloques que solo se materializan si la spec los pide: una decisión de la
+# entrevista modifica realmente el scaffold, no solo el ADR.
+condicionales:
+  - id: postgresql
+    cuando: {campo: base_datos, contiene: [postgres, postgresql]}
+    fragmentos:
+      "[[DEPENDENCIAS_EXTRA]]": "\n    \"sqlalchemy>=2.0\",\n    \"psycopg[binary]>=3.1\","
+      "[[ENV_EXTRA]]": |
+        # URL de PostgreSQL (por defecto apunta al servicio db de compose.yaml)
+        DATABASE_URL=postgresql+psycopg://app:app@localhost:5432/[[PAQUETE]]
+      "[[INSTRUCCIONES_EXTRA]]": |
+
+        ### Base de datos (PostgreSQL)
+
+        ```bash
+        docker compose up -d db    # PostgreSQL 16 local (ver compose.yaml)
+        ```
+
+        La URL de conexión sale de `DATABASE_URL` (ver `.env.example`).
+    archivos:
+      "compose.yaml": |
+        services:
+          app:
+            build: .
+            ports: ["8000:8000"]
+            environment:
+              SECRET_KEY: ${SECRET_KEY:?definir en .env}
+              DATABASE_URL: postgresql+psycopg://app:app@db:5432/[[PAQUETE]]
+            depends_on:
+              db:
+                condition: service_healthy
+          db:
+            image: postgres:16
+            environment:
+              # credenciales SOLO de desarrollo local; en producción usar
+              # un gestor de secretos o variables de entorno del despliegue
+              POSTGRES_USER: app
+              POSTGRES_PASSWORD: app
+              POSTGRES_DB: [[PAQUETE]]
+            ports: ["5432:5432"]
+            healthcheck:
+              test: ["CMD-SHELL", "pg_isready -U app"]
+              interval: 5s
+              timeout: 3s
+              retries: 10
+            volumes:
+              - pgdata:/var/lib/postgresql/data
+        volumes:
+          pgdata:
+
+      "src/[[PAQUETE]]/db.py": |
+        """Conexión a PostgreSQL (SQLAlchemy).
+
+        Este módulo existe porque la especificación eligió PostgreSQL.
+        """
+        from collections.abc import Iterator
+
+        from pydantic_settings import BaseSettings
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session, sessionmaker
+
+
+        class DBSettings(BaseSettings):
+            # default de desarrollo local (compose.yaml); en producción,
+            # definir DATABASE_URL en el entorno del despliegue
+            database_url: str = "postgresql+psycopg://app:app@localhost:5432/[[PAQUETE]]"
+
+            model_config = {"env_file": ".env"}
+
+
+        engine = create_engine(DBSettings().database_url, pool_pre_ping=True)
+        SessionLocal = sessionmaker(bind=engine)
+
+
+        def get_session() -> Iterator[Session]:
+            """Dependencia de FastAPI: una sesión por request."""
+            with SessionLocal() as session:
+                yield session
 
 archivos:
   "pyproject.toml": |
@@ -55,7 +134,7 @@ archivos:
     dependencies = [
         "fastapi>=0.110",
         "uvicorn[standard]>=0.29",
-        "pydantic-settings>=2.2",
+        "pydantic-settings>=2.2",[[DEPENDENCIAS_EXTRA]]
     ]
 
     [project.optional-dependencies]
@@ -77,6 +156,7 @@ archivos:
     # SECRET_KEY es obligatoria: la aplicación no arranca sin ella.
     APP_ENV=dev
     SECRET_KEY=
+    [[ENV_EXTRA]]
 
   "Dockerfile": |
     FROM python:3.12-slim
