@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Project Constructor IA</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <h1>Project Constructor IA</h1>
+  <p>Entrevista, auditoría y construcción de proyectos, con criterio experto verificable.</p>
+</header>
+
+<main id="setup" class="panel">
+  <h2>1. Elegí el proveedor de IA</h2>
+  <p class="hint">
+    El sistema es agnóstico del modelo: este formulario simplemente arma el mismo
+    <code>config.yaml</code> que usa la CLI, pero con tus datos, para esta sesión.
+    Nada se guarda en el servidor.
+  </p>
+
+  <div class="campo">
+    <label><input type="radio" name="provider" value="anthropic_api" checked /> Anthropic API (Claude)</label>
+    <label><input type="radio" name="provider" value="openai_compat" /> Compatible OpenAI (Ollama local, Groq, OpenRouter…)</label>
+  </div>
+
+  <div id="campos-anthropic" class="campo">
+    <label for="anthropic-key">API key de Anthropic</label>
+    <input id="anthropic-key" type="password" placeholder="sk-ant-…" autocomplete="off" />
+    <label for="anthropic-model">Modelo</label>
+    <input id="anthropic-model" type="text" placeholder="claude-sonnet-4-6" />
+  </div>
+
+  <div id="campos-openai" class="campo oculto">
+    <label for="openai-url">Base URL</label>
+    <input id="openai-url" type="text" placeholder="http://localhost:11434/v1" />
+    <label for="openai-model">Modelo</label>
+    <input id="openai-model" type="text" placeholder="qwen2.5:14b" />
+    <label for="openai-key">API key (opcional; Ollama la ignora)</label>
+    <input id="openai-key" type="password" autocomplete="off" />
+  </div>
+
+  <button id="iniciar">Iniciar entrevista</button>
+  <p id="error-setup" class="error oculto"></p>
+</main>
+
+<main id="chat" class="panel oculto">
+  <div id="estado" class="estado">Conectando…</div>
+  <div id="mensajes" class="mensajes" role="log" aria-live="polite"></div>
+  <form id="form-input" class="form-input">
+    <input id="input-texto" type="text" placeholder="Escribí tu respuesta…" autocomplete="off" disabled />
+    <button type="submit" disabled>Enviar</button>
+  </form>
+  <a id="descargar" class="oculto" href="#">Descargar proyecto generado (.zip)</a>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

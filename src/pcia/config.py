@@ -50,6 +50,7 @@ def crear_provider(config: dict[str, Any]) -> LLMProvider:
         return AnthropicAPIProvider(
             model=seccion.get("model", "claude-sonnet-4-6"),
             max_tokens=seccion.get("max_tokens", 2000),
+            api_key=seccion.get("api_key"),
         )
     if nombre == "openai_compat":
         from pcia.adapters.openai_compat import OpenAICompatProvider

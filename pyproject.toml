@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40"]
 dev = ["pytest>=8.0"]
+web = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
 
 [project.scripts]
 pcia = "pcia.cli:main"
@@ -26,4 +27,9 @@ pcia = "pcia.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-pcia = ["agents/prompts/*.md", "agents/rules/*.yaml", "agents/templates/*.yaml"]
+pcia = [
+    "agents/prompts/*.md",
+    "agents/rules/*.yaml",
+    "agents/templates/*.yaml",
+    "web/static/*",
+]
