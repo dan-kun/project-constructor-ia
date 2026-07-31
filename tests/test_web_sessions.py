@@ -282,3 +282,68 @@ def test_memoria_compartida_es_opt_in(monkeypatch, tmp_path):
     sesion = gestor.crear({"provider": "openai_compat", "openai_compat": {}})
 
     assert Path(sesion.orquestador._memory_dir) == compartida
+
+
+# --- panel de estado observable --------------------------------------------------
+
+
+def test_estado_refleja_el_avance_del_orquestador(monkeypatch, tmp_path):
+    """El evento lleva la foto del ciclo: el navegador no parsea texto."""
+    from conftest import FakeProvider
+
+    from pcia.web import sessions as web_sessions
+
+    updates = {
+        "nombre": "mi api",
+        "descripcion": "API de facturación",
+        "tipo_proyecto": "api",
+        "lenguaje": "python",
+        "framework": "fastapi",
+        "arquitectura": "capas",
+        "base_datos": "postgresql",
+        "autenticacion": "jwt",
+        "gestion_secretos": "variables de entorno",
+        "infraestructura": "docker",
+        "ci_cd": "github actions",
+        "alcance": "mvp",
+    }
+    provider = FakeProvider(
+        [
+            json.dumps({"message_to_user": "¿Qué construimos?", "updates": {}, "done": False}),
+            json.dumps({"message_to_user": "Listo.", "updates": updates, "done": True}),
+            '{"hallazgos": []}',
+            json.dumps({"readme_markdown": "# mi api\n", "adr_markdown": "# ADR-001\n"}),
+        ]
+    )
+    monkeypatch.setattr(web_sessions, "crear_provider", lambda config: provider)
+    from pcia.agents import verificador as modulo_verificador
+
+    monkeypatch.setattr(modulo_verificador, "_binario_disponible", lambda _: False)
+
+    gestor = GestorSesiones(memory_dir=tmp_path / "memory")
+    sesion = gestor.crear({"provider": "openai_compat", "openai_compat": {}})
+
+    eventos = []
+    respuestas = ["una API de facturación", "", "mi-api"]
+    while True:
+        evento = sesion.proximo_evento(timeout=5.0)
+        assert evento is not None, "la sesión se quedó sin eventos"
+        eventos.append(evento)
+        if evento.tipo in ("fin", "error"):
+            break
+        if respuestas:
+            sesion.enviar_input(respuestas.pop(0))
+
+    assert eventos[-1].tipo == "fin", eventos[-1].texto
+    final = eventos[-1].estado
+    assert final["fase"] == "fin"
+    assert final["spec"]["framework"] == "fastapi"
+    assert final["campos_faltantes"] == []
+    assert final["semaforo"] == "verde"
+    assert final["stack"] == "fastapi"
+    assert "pyproject.toml" in final["archivos"]
+    # sin docker en el entorno de test, los chequeos obligatorios quedan omitidos
+    assert final["verificacion"]["estado"] == "inconcluso"
+    # la fase avanza durante la corrida, no solo al final
+    fases = [e.estado["fase"] for e in eventos if e.estado]
+    assert "entrevista" in fases and "construccion" in fases

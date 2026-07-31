@@ -47,6 +47,9 @@ class SesionInvalidaError(Exception):
 class Evento:
     tipo: str  # "mensaje" | "fin" | "error"
     texto: str = ""
+    # Foto del estado observable del Orquestador en el momento del evento:
+    # deja que el navegador muestre el avance del ciclo sin parsear el texto.
+    estado: dict[str, Any] | None = None
 
 
 @dataclass
@@ -104,7 +107,57 @@ class Sesion:
 
     def salida(self, texto: str) -> None:
         self.transcript.registrar_salida(texto)
-        self._salida_q.put(Evento(tipo="mensaje", texto=texto))
+        self._salida_q.put(Evento(tipo="mensaje", texto=texto, estado=self.estado()))
+
+    def estado(self) -> dict[str, Any] | None:
+        """Estado observable del Orquestador (fase, spec, auditoría, etc.).
+
+        Lee los atributos públicos que el Orquestador expone para sus
+        adaptadores de IO; no interpreta los mensajes de texto.
+        """
+        orq = self.orquestador
+        if orq is None:
+            return None
+        construccion, verificacion, auditoria = (
+            orq.construccion,
+            orq.verificacion,
+            orq.auditoria,
+        )
+        return {
+            "fase": orq.fase_actual.value,
+            "spec": orq.spec.model_dump(),
+            "campos_faltantes": orq.spec.campos_faltantes(),
+            "semaforo": auditoria.semaforo().value if auditoria else None,
+            "hallazgos": [
+                {
+                    "id": h.id,
+                    "severidad": h.severidad.value,
+                    "mensaje": h.mensaje,
+                    "correccion_propuesta": h.correccion_propuesta,
+                    "origen": h.origen,
+                }
+                for h in (auditoria.hallazgos if auditoria else [])
+            ],
+            "stack": construccion.stack if construccion else None,
+            "archivos": construccion.archivos if construccion else [],
+            "riesgos_asumidos": list(orq.spec.riesgos_asumidos),
+            "verificacion": (
+                {
+                    "estado": verificacion.estado(),
+                    "profundos": [
+                        {
+                            "id": c.archivo,
+                            "estado": c.estado,
+                            "obligatorio": c.obligatorio,
+                        }
+                        for c in verificacion.profundos
+                    ],
+                    "errores_sintaxis": [c.archivo for c in verificacion.errores()],
+                }
+                if verificacion
+                else None
+            ),
+        }
 
     def enviar_input(self, texto: str) -> None:
         self.ultimo_acceso = time.monotonic()
@@ -173,10 +226,12 @@ class GestorSesiones:
             except Exception as exc:  # noqa: BLE001 — se reporta al usuario, no se oculta
                 sesion.transcript.registrar_error(str(exc))
                 sesion.guardar_transcript()
-                sesion._salida_q.put(Evento(tipo="error", texto=str(exc)))
+                sesion._salida_q.put(
+                    Evento(tipo="error", texto=str(exc), estado=sesion.estado())
+                )
                 return
             sesion.guardar_transcript()
-            sesion._salida_q.put(Evento(tipo="fin"))
+            sesion._salida_q.put(Evento(tipo="fin", estado=sesion.estado()))
 
         sesion.hilo = threading.Thread(target=_correr, daemon=True)
         with self._lock:

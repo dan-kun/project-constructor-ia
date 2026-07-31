@@ -147,7 +147,10 @@ async def eventos(sesion_id: str) -> StreamingResponse:
             if evento is None:
                 yield ": keepalive\n\n"  # comentario SSE: mantiene viva la conexión
                 continue
-            yield f"data: {json.dumps({'tipo': evento.tipo, 'texto': evento.texto})}\n\n"
+            carga = {"tipo": evento.tipo, "texto": evento.texto}
+            if evento.estado is not None:
+                carga["estado"] = evento.estado
+            yield f"data: {json.dumps(carga, ensure_ascii=False)}\n\n"
             if evento.tipo in ("fin", "error"):
                 return
 

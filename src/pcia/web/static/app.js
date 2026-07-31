@@ -237,7 +237,7 @@ async function iniciarSesion() {
   sesionId = datos.session_id;
 
   elSetup.classList.add("oculto");
-  elChat.classList.remove("oculto");
+  document.getElementById("area-sesion").classList.remove("oculto");
   setEstado("Conectado — esperando al Entrevistador…", true);
   conectarEventos();
 }
@@ -246,6 +246,7 @@ function conectarEventos() {
   const fuente = new EventSource(`/api/sessions/${sesionId}/events`);
   fuente.onmessage = (evt) => {
     const data = JSON.parse(evt.data);
+    if (data.estado) pintarEstado(data.estado);
     if (data.tipo === "mensaje") {
       agregarMensaje(data.texto);
       setEstado("Tu turno", true);
@@ -308,3 +309,78 @@ document.getElementById("olvidar-preferencias").addEventListener("click", (ev) =
 });
 
 cargarPreferencias();
+
+// --- Panel de estado del ciclo ---------------------------------------------------
+// Se alimenta de la foto que viaja en cada evento SSE (ver sessions.py::estado):
+// el navegador no interpreta los mensajes de texto, solo renderiza datos.
+
+const FASES = ["analisis", "entrevista", "auditoria", "construccion", "verificacion", "entrega", "aprendizaje"];
+const ETIQUETAS_FASE = {
+  analisis: "Análisis", entrevista: "Entrevista", auditoria: "Auditoría",
+  construccion: "Construcción", verificacion: "Verificación", entrega: "Entrega",
+  aprendizaje: "Aprendizaje", fin: "Fin",
+};
+const CAMPOS_SPEC = ["nombre", "descripcion", "tipo_proyecto", "lenguaje", "framework",
+  "arquitectura", "base_datos", "autenticacion", "gestion_secretos", "infraestructura",
+  "ci_cd", "alcance"];
+const EMOJI_SEMAFORO = { verde: "🟢", amarillo: "🟡", rojo: "🔴" };
+const EMOJI_CHEQUEO = { ok: "✅", error: "❌", omitido: "⏭️" };
+
+function escaparHtml(valor) {
+  const div = document.createElement("div");
+  div.textContent = String(valor);
+  return div.innerHTML;
+}
+
+function pintarEstado(estado) {
+  const indiceActual = FASES.indexOf(estado.fase);
+  document.getElementById("fases").innerHTML = FASES.map((fase, i) => {
+    const terminada = estado.fase === "fin" || (indiceActual >= 0 && i < indiceActual);
+    const clase = fase === estado.fase ? "activa" : terminada ? "hecha" : "";
+    return `<span class="fase ${clase}">${ETIQUETAS_FASE[fase]}</span>`;
+  }).join("");
+
+  const spec = estado.spec || {};
+  let htmlSpec = CAMPOS_SPEC.map((campo) => {
+    const valor = spec[campo];
+    return `<div class="campo-estado"><span class="k">${campo}</span>` +
+      `<span class="v ${valor ? "" : "vacio"}">${valor ? escaparHtml(valor) : "—"}</span></div>`;
+  }).join("");
+  if (estado.riesgos_asumidos && estado.riesgos_asumidos.length) {
+    htmlSpec += `<div class="campo-estado"><span class="k">riesgos asumidos</span>` +
+      `<span class="v">${estado.riesgos_asumidos.length}</span></div>`;
+  }
+  document.getElementById("panel-spec").innerHTML = htmlSpec;
+
+  if (estado.semaforo) {
+    let html = `<div class="semaforo">${EMOJI_SEMAFORO[estado.semaforo] || ""} ${estado.semaforo}</div>`;
+    html += estado.hallazgos.length
+      ? estado.hallazgos.map((h) =>
+          `<div class="hallazgo ${h.severidad}">` +
+          `<span class="id">[${escaparHtml(h.id)}] ${escaparHtml(h.origen)}</span><br>${escaparHtml(h.mensaje)}` +
+          (h.correccion_propuesta ? `<div class="fix">↳ ${escaparHtml(h.correccion_propuesta)}</div>` : "") +
+          `</div>`).join("")
+      : `<span class="vacio">Sin hallazgos: la especificación es coherente.</span>`;
+    document.getElementById("panel-auditoria").innerHTML = html;
+  }
+
+  if (estado.stack) {
+    document.getElementById("panel-construccion").innerHTML =
+      `<div class="campo-estado"><span class="k">plantilla</span><span class="v">${escaparHtml(estado.stack)}</span></div>` +
+      `<div class="campo-estado"><span class="k">archivos</span><span class="v">${estado.archivos.length}</span></div>` +
+      `<div class="archivos">${estado.archivos.map((a) => `<div>${escaparHtml(a)}</div>`).join("")}</div>`;
+  }
+
+  const verif = estado.verificacion;
+  if (verif) {
+    let html = `<div class="fila-badge"><span class="badge ${verif.estado}">${verif.estado.replace(/_/g, " ")}</span></div>`;
+    html += verif.profundos.map((c) =>
+      `<div class="chequeo"><span>${EMOJI_CHEQUEO[c.estado] || ""}</span>` +
+      `<span class="id">${escaparHtml(c.id)}</span>` +
+      `<span class="opcional">${c.estado === "omitido" && !c.obligatorio ? "opcional" : ""}</span></div>`).join("");
+    if (verif.errores_sintaxis.length) {
+      html += `<div class="errores">Errores: ${verif.errores_sintaxis.map(escaparHtml).join(", ")}</div>`;
+    }
+    document.getElementById("panel-verificacion").innerHTML = html;
+  }
+}

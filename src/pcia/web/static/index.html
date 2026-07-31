@@ -73,7 +73,8 @@
   <p id="error-setup" class="error oculto"></p>
 </main>
 
-<main id="chat" class="panel oculto">
+<div id="area-sesion" class="area-sesion oculto">
+<main id="chat" class="panel">
   <div id="estado" class="estado">Conectando…</div>
   <div id="mensajes" class="mensajes" role="log" aria-live="polite"></div>
   <form id="form-input" class="form-input">
@@ -85,6 +86,36 @@
     <a id="descargar" class="oculto" href="#">Descargar proyecto generado (.zip)</a>
   </div>
 </main>
+
+<aside id="lateral" class="panel lateral" aria-live="polite" aria-label="Estado del proyecto">
+  <h2 class="titulo-lateral">Estado del proyecto</h2>
+
+  <section class="bloque">
+    <h3>Fase del ciclo</h3>
+    <div class="fases" id="fases"></div>
+  </section>
+
+  <section class="bloque">
+    <h3>Especificación</h3>
+    <div id="panel-spec"><span class="vacio">Todavía sin datos.</span></div>
+  </section>
+
+  <section class="bloque">
+    <h3>Auditoría de coherencia</h3>
+    <div id="panel-auditoria"><span class="vacio">Aún no auditada.</span></div>
+  </section>
+
+  <section class="bloque">
+    <h3>Scaffold generado</h3>
+    <div id="panel-construccion"><span class="vacio">Aún no construido.</span></div>
+  </section>
+
+  <section class="bloque">
+    <h3>Verificación</h3>
+    <div id="panel-verificacion"><span class="vacio">Aún no verificada.</span></div>
+  </section>
+</aside>
+</div>
 
 <script src="/app.js"></script>
 </body>
