@@ -81,3 +81,53 @@ def test_discover_models_error_de_red_devuelve_502(monkeypatch, cliente):
 
     assert resp.status_code == 502
     assert "no se pudo conectar" in resp.json()["detail"]
+
+
+# --- formatos de /v1/models ------------------------------------------------------
+
+
+def test_extrae_modelos_en_formato_openai():
+    from pcia.web.app import extraer_nombres_de_modelos
+
+    datos = {"object": "list", "data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]}
+
+    assert extraer_nombres_de_modelos(datos) == ["gpt-4o", "gpt-4o-mini"]
+
+
+def test_extrae_modelos_en_formato_ollama():
+    """Ollama y algunos llama.cpp devuelven {models:[{name}]} en /v1/models."""
+    from pcia.web.app import extraer_nombres_de_modelos
+
+    datos = {
+        "models": [
+            {"name": "unsloth/Qwen3-30B-A3B-GGUF", "model": "unsloth/Qwen3-30B-A3B-GGUF"},
+            {"name": "llama3.2", "model": "llama3.2"},
+        ]
+    }
+
+    assert extraer_nombres_de_modelos(datos) == ["llama3.2", "unsloth/Qwen3-30B-A3B-GGUF"]
+
+
+@pytest.mark.parametrize("datos", [{}, [], None, {"data": []}, {"models": [{}]}])
+def test_respuestas_sin_modelos_devuelven_lista_vacia(datos):
+    from pcia.web.app import extraer_nombres_de_modelos
+
+    assert extraer_nombres_de_modelos(datos) == []
+
+
+def test_discover_models_acepta_formato_ollama(monkeypatch, cliente):
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda url, headers, timeout: RespuestaFalsa(
+            {"models": [{"name": "unsloth/Qwen3-30B-A3B-GGUF"}]}
+        ),
+    )
+
+    resp = cliente.post(
+        "/api/discover-models",
+        json={"base_url": "http://localhost:8088/v1", "api_key": ""},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"modelos": ["unsloth/Qwen3-30B-A3B-GGUF"]}

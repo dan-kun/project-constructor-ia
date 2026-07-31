@@ -127,11 +127,29 @@ def descubrir_modelos(datos: DescubrirModelosRequest) -> dict[str, list[str]]:
         raise HTTPException(
             status_code=502, detail=f"No se pudo consultar {base_url}: {exc}"
         ) from exc
-    datos_respuesta = resp.json()
-    nombres = sorted(m["id"] for m in datos_respuesta.get("data", []) if "id" in m)
+    nombres = extraer_nombres_de_modelos(resp.json())
     if not nombres:
         raise HTTPException(status_code=502, detail="La respuesta no trae modelos.")
     return {"modelos": nombres}
+
+
+def extraer_nombres_de_modelos(datos: object) -> list[str]:
+    """Nombres de modelos, tolerando las dos formas que devuelven los servidores.
+
+    - OpenAI: ``{"data": [{"id": "..."}]}``
+    - Ollama y algunos servidores de llama.cpp: ``{"models": [{"name": "..."}]}``
+
+    Ambas conviven detrás del mismo ``/v1/models``, así que se aceptan las dos
+    en vez de asumir que un servidor "compatible con OpenAI" lo es del todo.
+    """
+    if not isinstance(datos, dict):
+        return []
+    nombres = set()
+    for clave, campo in (("data", "id"), ("models", "name"), ("models", "model")):
+        for entrada in datos.get(clave) or []:
+            if isinstance(entrada, dict) and isinstance(entrada.get(campo), str):
+                nombres.add(entrada[campo])
+    return sorted(nombres)
 
 
 @app.get("/api/sessions/{sesion_id}/events")

@@ -128,12 +128,24 @@ function poblarSelectorModelos(nombres) {
   document.getElementById("openai-model-custom").classList.add("oculto");
 }
 
+// Los servidores "compatibles con OpenAI" no siempre lo son del todo en
+// /v1/models: OpenAI devuelve {data:[{id}]} y Ollama (y algunos llama.cpp)
+// {models:[{name}]}. Se aceptan ambas formas.
+function nombresDeModelos(datos) {
+  const nombres = new Set();
+  for (const m of datos?.data || []) if (typeof m?.id === "string") nombres.add(m.id);
+  for (const m of datos?.models || []) {
+    if (typeof m?.name === "string") nombres.add(m.name);
+    else if (typeof m?.model === "string") nombres.add(m.model);
+  }
+  return [...nombres].sort();
+}
+
 async function descubrirModelosDesdeElNavegador(baseUrl, apiKey) {
   const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
   const resp = await fetch(`${baseUrl}/models`, { headers });
   if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
-  const datos = await resp.json();
-  const nombres = (datos.data || []).map((m) => m.id).sort();
+  const nombres = nombresDeModelos(await resp.json());
   if (nombres.length === 0) throw new Error("la respuesta no trae modelos");
   return nombres;
 }
