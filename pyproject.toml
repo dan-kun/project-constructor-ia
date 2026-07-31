@@ -18,8 +18,10 @@ dependencies = [
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40"]
 # Interfaz web (adaptador de IO opcional): el core sigue sin depender de esto.
-web = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
-dev = ["pytest>=8.0", "fastapi>=0.110", "httpx>=0.27"]
+web = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+# fastapi también en dev: los tests del adaptador web usan su TestClient
+# (httpx, que TestClient necesita, ya es dependencia del core).
+dev = ["pytest>=8.0", "fastapi>=0.115"]
 
 [project.scripts]
 pcia = "pcia.cli:main"
@@ -33,5 +35,5 @@ pcia = [
     "agents/prompts/*.md",
     "agents/rules/*.yaml",
     "agents/templates/*.yaml",
-    "web/static/*.html",
+    "web/static/*",
 ]
