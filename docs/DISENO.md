@@ -131,7 +131,84 @@ No materializado en ningún stack (queda en README/ADR): autenticación (JWT/OAu
 arquitectura interna (hexagonal/capas), CI/CD distinto de GitHub Actions, otras bases de
 datos. Cada uno es un bloque condicional candidato para el roadmap.
 
-## 9. Formato de salida del Entrevistador (contrato)
+## 9. Trabajo futuro
+
+### 9.1 Recuperación semántica de documentación de clientes (RAG con embeddings locales)
+
+**El problema real.** El Analista de Documentos hoy lee los archivos completos y los trunca
+a 15.000 caracteres por documento (`MAX_CARACTERES_POR_DOC`). Con documentación de cliente
+de verdad — un pliego extenso, un relevamiento, un hilo de actas — lo que queda después del
+corte simplemente no existe para el sistema. Es la limitación más concreta del agente: no
+falla ruidosamente, silenciosamente ignora información.
+
+**Diseño propuesto.** Un puerto nuevo, coherente con el principio de agnosticismo del
+proveedor (§6):
+
+```
+EmbeddingProvider (puerto)
+    embed(textos: Sequence[str]) -> list[list[float]]
+        ├── openai_compat_embeddings   (llama.cpp / Ollama / LM Studio locales, o API)
+        └── anthropic_voyage / otros
+
+IndiceDocumental (puerto)
+    indexar(fragmentos) / recuperar(consulta, k) -> list[Fragmento]
+        └── implementación inicial: sqlite-vec o chromadb embebido (sin servidor)
+```
+
+El Analista pasaría de "leer todo y truncar" a **recuperar por campo de la spec**: para cada
+campo requerido genera una consulta ("¿qué dice la documentación sobre autenticación?") y
+arma el prompt con los fragmentos relevantes más su cita textual. La evidencia sigue siendo
+trazable —de hecho mejora, porque el fragmento recuperado *es* la cita.
+
+**Por qué el modelo de embeddings debería ser local.** La documentación de un cliente suele
+ser confidencial (requisitos de negocio, datos de infraestructura, a veces datos personales).
+Indexarla contra una API de terceros implica que cada fragmento cruza la red hacia un
+proveedor externo. Un modelo de embeddings chico corriendo local resuelve el caso de uso sin
+que ningún fragmento salga de la máquina, y encaja en la infraestructura que el proyecto ya
+usa (`openai_compat` contra llama.cpp). Es el argumento más fuerte a favor de un SLM local en
+esta arquitectura: no es ahorro de costos, es que **cierta información no debería viajar**.
+
+Limitaciones honestas a evaluar antes de implementarlo: los modelos de embeddings chicos
+tienen menor calidad de recuperación que los de API; el índice hay que mantenerlo sincronizado
+con los documentos; y agrega dependencias (store vectorial + modelo de embeddings) a un core
+que hoy usa solo pydantic, pyyaml y httpx.
+
+### 9.2 Por qué el Aprendizaje **no** se vectoriza
+
+Podría parecer natural extender la misma idea a la memoria de proyectos, pero sería un error
+de diseño en este sistema:
+
+- **Escala invertida.** La búsqueda vectorial rinde con miles de documentos. La memoria va a
+  tener decenas de proyectos: a esa escala no hace falta *recuperar* los relevantes, entran
+  todos en el prompt. Resolvería un problema que el sistema no tiene.
+- **Explicabilidad.** El diferencial declarado es criterio experto **verificable**. Hoy el
+  Aprendizaje afirma "postgresql en 3 de 4 proyectos": exacto, auditable y defendible. Una
+  similitud coseno de 0.83 no es ninguna de las tres. Cambiar un mecanismo determinístico por
+  uno aproximado, justo en el componente que sostiene las garantías cuando el LLM es débil
+  (§6, degradación con gracia), debilita la propuesta central.
+- **El problema concreto tiene solución más simple.** La agrupación de preferencias
+  equivalentes ("contenedores docker sobre un vps propio" vs. "docker") se resuelve con un
+  diccionario de alias determinístico, explicable y de veinte líneas.
+
+Conclusión de diseño: **RAG donde el volumen de texto excede el contexto (documentación de
+clientes), conteo determinístico donde la explicabilidad importa más que la semántica
+(memoria de decisiones)**.
+
+### 9.3 Otras líneas abiertas
+
+- **Más bloques condicionales**: autenticación (JWT), otras bases de datos, arquitectura
+  hexagonal materializada — cada uno cierra una fila de la matriz de capacidades (§8).
+- **Reglas candidatas para el Auditor**: derivar reglas de la experiencia acumulada (p. ej. un
+  diagnóstico de build que se repite en un stack), presentadas como propuestas que un humano
+  aprueba antes de entrar a la matriz. Nunca automático: es una decisión de alto impacto.
+- **Soporte de PDF en el Analista**, hoy limitado a `.md` y `.txt`.
+- **Separar `plan` / `apply` / `verify` en la CLI**, con un dry-run que muestre el árbol de
+  archivos, las dependencias y los comandos antes de escribir nada — patrón de Backstage
+  Software Templates y de Copier.
+- **Paquetes de stack versionados** (`StackPacks`) con estado declarado (experimental /
+  verificado / certificado), para incorporar ecosistemas nuevos sin tocar el orquestador.
+
+## 10. Formato de salida del Entrevistador (contrato)
 
 ```json
 {

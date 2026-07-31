@@ -77,8 +77,10 @@ Garantías de diseño:
 - **Degradación con gracia**: con modelos débiles, las reglas determinísticas del Auditor
   y las verificaciones automáticas sostienen las garantías mínimas.
 
-Detalle completo, roadmap y **matriz de capacidades** (qué materializa realmente cada
-plantilla y qué queda solo documentado): [`docs/DISENO.md`](docs/DISENO.md).
+- **Diagramas** (componentes, máquina de estados, UML de clases y secuencia de una corrida
+  real): [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md)
+- **Diseño completo**, roadmap, trabajo futuro y **matriz de capacidades** (qué materializa
+  realmente cada plantilla y qué queda solo documentado): [`docs/DISENO.md`](docs/DISENO.md)
 
 ## Configuración del proveedor
 
