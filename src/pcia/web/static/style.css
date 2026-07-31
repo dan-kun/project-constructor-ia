@@ -237,9 +237,24 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   .lateral { order: -1; }
   .archivos { max-height: 140px; }
   .area-sesion > #chat.panel { min-height: 60vh; }
+  /* En angosto el panel va arriba y en flujo normal: fijarlo comería
+     media pantalla justo donde menos sobra. */
+  .lateral { position: static; max-height: none; }
 }
 
-.lateral { padding: 0; overflow: hidden; align-self: start; }
+/* El panel acompaña el scroll a medida que la conversación crece: el estado
+   del ciclo tiene que estar visible en todo momento, no solo al principio
+   (visibilidad del estado, Nielsen H1). ``align-self: start`` es lo que le
+   deja margen para desplazarse dentro de su columna. */
+.lateral {
+  padding: 0;
+  align-self: start;
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
 
 .titulo-lateral {
   margin: 0;
