@@ -104,3 +104,36 @@ def test_endpoint_permite_interno_si_esta_habilitado(monkeypatch):
 
     assert respuesta.status_code == 200
     assert respuesta.json() == {"modelos": ["qwen3:8b"]}
+
+
+# --- el permiso local depende del host de escucha ---------------------------------
+
+
+def _main_sin_servidor(monkeypatch, argv):
+    """Corre main() interceptando uvicorn.run (no levanta nada de verdad)."""
+    import uvicorn
+
+    from pcia.web import app as modulo_app
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+    monkeypatch.delenv(modulo_app.VAR_DESTINOS_PRIVADOS, raising=False)
+    modulo_app.main(argv)
+    import os
+
+    return os.environ.get(modulo_app.VAR_DESTINOS_PRIVADOS)
+
+
+def test_escuchar_en_loopback_habilita_destinos_internos(monkeypatch):
+    assert _main_sin_servidor(monkeypatch, ["--host", "127.0.0.1"]) == "1"
+
+
+def test_exponerse_en_la_red_no_habilita_destinos_internos(monkeypatch):
+    # con --host 0.0.0.0 un visitante podría usar el server como proxy
+    assert _main_sin_servidor(monkeypatch, ["--host", "0.0.0.0"]) is None
+
+
+def test_flag_explicito_desactiva_aun_en_loopback(monkeypatch):
+    assert (
+        _main_sin_servidor(monkeypatch, ["--host", "localhost", "--sin-destinos-privados"])
+        is None
+    )

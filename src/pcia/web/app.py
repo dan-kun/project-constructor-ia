@@ -195,12 +195,18 @@ def descargar_transcript(sesion_id: str) -> FileResponse:
 app.mount("/", StaticFiles(directory=RAIZ / "static", html=True), name="static")
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Punto de entrada del script ``pcia-web`` (corrida local).
+HOSTS_LOCALES = frozenset({"127.0.0.1", "localhost", "::1"})
 
-    Al ser una corrida local explícita habilita el descubrimiento de modelos
-    contra destinos internos (Ollama en localhost). Un despliegue público se
-    arranca con ``uvicorn pcia.web.app:app`` y no lo habilita.
+
+def main(argv: list[str] | None = None) -> int:
+    """Punto de entrada del script ``pcia-web``.
+
+    Habilita el descubrimiento de modelos contra destinos internos (un Ollama
+    en localhost es un caso legítimo) **solo si además escucha en loopback**:
+    ahí el único que puede usar el endpoint ya es el dueño de la máquina, que
+    de todos modos alcanza esas direcciones por su cuenta. Al exponerse en la
+    red (``--host 0.0.0.0``) queda desactivado, porque un visitante podría
+    usar el servidor como proxy hacia servicios internos.
     """
     import argparse
 
@@ -224,8 +230,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not args.sin_destinos_privados:
+    escucha_local = args.host in HOSTS_LOCALES
+    if escucha_local and not args.sin_destinos_privados:
         os.environ.setdefault(VAR_DESTINOS_PRIVADOS, "1")
+    elif not escucha_local:
+        os.environ.pop(VAR_DESTINOS_PRIVADOS, None)
+        print(
+            f"Escuchando en {args.host} (no es loopback): el descubrimiento de "
+            "modelos queda limitado a destinos públicos."
+        )
     if args.memoria_compartida:
         os.environ[VAR_MEMORIA_COMPARTIDA] = "1"
         gestor.memoria_por_sesion = False
