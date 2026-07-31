@@ -79,6 +79,8 @@ Garantías de diseño:
 
 - **Diagramas** (componentes, máquina de estados, UML de clases y secuencia de una corrida
   real): [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md)
+- **Log de ciberseguridad**: riesgos identificados, medidas implementadas con su evidencia y
+  riesgo residual declarado: [`docs/SEGURIDAD.md`](docs/SEGURIDAD.md)
 - **Diseño completo**, roadmap, trabajo futuro y **matriz de capacidades** (qué materializa
   realmente cada plantilla y qué queda solo documentado): [`docs/DISENO.md`](docs/DISENO.md)
 
