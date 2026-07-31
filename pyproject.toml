@@ -17,13 +17,21 @@ dependencies = [
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40"]
-dev = ["pytest>=8.0"]
+# Interfaz web (adaptador de IO opcional): el core sigue sin depender de esto.
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
+dev = ["pytest>=8.0", "fastapi>=0.110", "httpx>=0.27"]
 
 [project.scripts]
 pcia = "pcia.cli:main"
+pcia-web = "pcia.web.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-pcia = ["agents/prompts/*.md", "agents/rules/*.yaml", "agents/templates/*.yaml"]
+pcia = [
+    "agents/prompts/*.md",
+    "agents/rules/*.yaml",
+    "agents/templates/*.yaml",
+    "web/static/*.html",
+]

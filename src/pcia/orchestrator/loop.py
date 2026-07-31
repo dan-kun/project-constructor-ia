@@ -111,6 +111,10 @@ class Orquestador:
         self.ruta_proyecto: Path | None = None
         self.resoluciones: list[ResolucionHallazgo] = []
         self.correcciones_build: list[str] = []
+        # Estado observable: los adaptadores de IO (consola, web) leen el
+        # avance del ciclo sin parsear los mensajes de texto.
+        self.fase_actual = Fase.ANALISIS
+        self.auditoria: ResultadoAuditoria | None = None
         self._construccion: ResultadoConstruccion | None = None
         self._verificacion: ResultadoVerificacion | None = None
         self._memoria = Memoria(self._memory_dir)
@@ -136,9 +140,21 @@ class Orquestador:
         self._inicio = time.monotonic()
         fase = Fase.ANALISIS
         while fase is not Fase.FIN:
+            self.fase_actual = fase
             fase = manejadores[fase]()
+        self.fase_actual = Fase.FIN
         assert self.ruta_spec is not None
         return self.ruta_spec
+
+    @property
+    def construccion(self) -> ResultadoConstruccion | None:
+        """Qué se construyó (solo lectura, para los adaptadores de IO)."""
+        return self._construccion
+
+    @property
+    def verificacion(self) -> ResultadoVerificacion | None:
+        """Cómo salió la verificación (solo lectura)."""
+        return self._verificacion
 
     # --- fases -------------------------------------------------------------
 
@@ -213,6 +229,7 @@ class Orquestador:
         detectados: dict[str, Hallazgo] = {}
         for ciclo in range(MAX_CICLOS_COHERENCIA):
             resultado = auditor.auditar(self.spec)
+            self.auditoria = resultado
             self._salida(_formatear_reporte(resultado))
             pendientes = resultado.pendientes()
             detectados.update({h.id: h for h in pendientes})

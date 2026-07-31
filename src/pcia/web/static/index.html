@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Constructor IA</title>
+<style>
+  :root {
+    --fondo: #0f1117;
+    --panel: #171a23;
+    --panel-alto: #1e222d;
+    --borde: #2a2f3c;
+    --texto: #e6e8ee;
+    --tenue: #9aa3b5;
+    --acento: #6ea8fe;
+    --verde: #4ade80;
+    --amarillo: #fbbf24;
+    --rojo: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    background: var(--fondo); color: var(--texto);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--borde);
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--tenue); font-size: 13px; }
+  .estado-conexion { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tenue); }
+  .punto { width: 9px; height: 9px; border-radius: 50%; background: var(--tenue); }
+  .punto.on { background: var(--verde); }
+  .punto.off { background: var(--rojo); }
+
+  main { flex: 1; display: grid; grid-template-columns: 1fr 380px; min-height: 0; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } #lateral { display: none; } }
+
+  section { display: flex; flex-direction: column; min-height: 0; }
+  #lateral { background: var(--panel); border-left: 1px solid var(--borde); overflow-y: auto; }
+
+  .titulo-panel {
+    padding: 10px 16px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--tenue); border-bottom: 1px solid var(--borde);
+  }
+
+  #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 82%; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.agente { background: var(--panel-alto); border: 1px solid var(--borde); }
+  .msg.usuario { background: #23405e; align-self: flex-end; }
+  .msg.sistema { background: transparent; border: 1px dashed var(--borde); color: var(--tenue); font-size: 13px; max-width: 100%; }
+  .msg.error { background: #3b1d1d; border: 1px solid var(--rojo); color: #ffd7d7; max-width: 100%; }
+  .msg .quien { display: block; font-size: 11px; color: var(--tenue); margin-bottom: 4px; }
+
+  #zona-entrada { display: flex; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--borde); background: var(--panel); }
+  #prompt { color: var(--acento); font-size: 13px; padding: 0 20px 8px; background: var(--panel); }
+  #entrada {
+    flex: 1; padding: 11px 14px; border-radius: 10px; border: 1px solid var(--borde);
+    background: var(--fondo); color: var(--texto); font: inherit;
+  }
+  #entrada:focus { outline: none; border-color: var(--acento); }
+  #entrada:disabled { opacity: .5; }
+  button {
+    padding: 11px 20px; border-radius: 10px; border: 0; background: var(--acento);
+    color: #0d1117; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .4; cursor: default; }
+
+  .bloque { padding: 14px 16px; border-bottom: 1px solid var(--borde); }
+  .bloque h3 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--tenue); }
+
+  .fases { display: flex; flex-wrap: wrap; gap: 6px; }
+  .fase { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--borde); color: var(--tenue); }
+  .fase.activa { background: var(--acento); color: #0d1117; border-color: var(--acento); font-weight: 600; }
+  .fase.hecha { color: var(--verde); border-color: #2c4a38; }
+
+  .campo { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; font-size: 13px; }
+  .campo .k { color: var(--tenue); }
+  .campo .v { text-align: right; word-break: break-word; }
+  .campo .v.vacio { color: #5b6376; font-style: italic; }
+
+  .semaforo { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 8px; }
+  .hallazgo { font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: var(--panel-alto); margin-bottom: 6px; border-left: 3px solid var(--borde); }
+  .hallazgo.rojo { border-left-color: var(--rojo); }
+  .hallazgo.amarillo { border-left-color: var(--amarillo); }
+  .hallazgo.verde { border-left-color: var(--verde); }
+  .hallazgo .id { font-family: ui-monospace, monospace; font-size: 11px; color: var(--tenue); }
+  .hallazgo .fix { color: var(--tenue); margin-top: 4px; font-size: 12px; }
+
+  .archivos { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; color: var(--tenue); max-height: 220px; overflow-y: auto; }
+  .archivos div { padding: 1px 0; }
+
+  .chequeo { display: flex; gap: 8px; font-size: 12.5px; padding: 3px 0; }
+  .chequeo .id { font-family: ui-monospace, monospace; }
+  .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge.aprobado { background: #14361f; color: var(--verde); }
+  .badge.aprobado_con_advertencias { background: #3b2f12; color: var(--amarillo); }
+  .badge.inconcluso { background: #2b2f3d; color: var(--tenue); }
+  .badge.fallido { background: #3b1d1d; color: var(--rojo); }
+  .vacio-panel { color: #5b6376; font-size: 13px; font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Project Constructor IA</h1>
+  <span class="sub" id="proveedor"></span>
+  <div class="estado-conexion"><span class="punto" id="punto"></span><span id="conexion">conectando…</span></div>
+</header>
+
+<main>
+  <section>
+    <div id="chat"></div>
+    <div id="prompt"></div>
+    <div id="zona-entrada">
+      <input id="entrada" placeholder="Esperando al agente…" disabled autocomplete="off">
+      <button id="enviar" disabled>Enviar</button>
+    </div>
+  </section>
+
+  <section id="lateral">
+    <div class="titulo-panel">Estado del proyecto</div>
+
+    <div class="bloque">
+      <h3>Fase del ciclo</h3>
+      <div class="fases" id="fases"></div>
+    </div>
+
+    <div class="bloque">
+      <h3>Especificación</h3>
+      <div id="spec"><span class="vacio-panel">Todavía sin datos.</span></div>
+    </div>
+
+    <div class="bloque">
+      <h3>Auditoría de coherencia</h3>
+      <div id="auditoria"><span class="vacio-panel">Aún no auditada.</span></div>
+    </div>
+
+    <div class="bloque">
+      <h3>Scaffold generado</h3>
+      <div id="construccion"><span class="vacio-panel">Aún no construido.</span></div>
+    </div>
+
+    <div class="bloque">
+      <h3>Verificación</h3>
+      <div id="verificacion"><span class="vacio-panel">Aún no verificada.</span></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const FASES = ["analisis", "entrevista", "auditoria", "construccion", "verificacion", "entrega", "aprendizaje"];
+const ETIQUETAS = {
+  analisis: "Análisis", entrevista: "Entrevista", auditoria: "Auditoría",
+  construccion: "Construcción", verificacion: "Verificación", entrega: "Entrega",
+  aprendizaje: "Aprendizaje", fin: "Fin"
+};
+const CAMPOS = ["nombre", "descripcion", "tipo_proyecto", "lenguaje", "framework", "arquitectura",
+                "base_datos", "autenticacion", "gestion_secretos", "infraestructura", "ci_cd", "alcance"];
+const EMOJI_SEMAFORO = { verde: "🟢", amarillo: "🟡", rojo: "🔴" };
+const EMOJI_CHEQUEO = { ok: "✅", error: "❌", omitido: "⏭️" };
+
+const $ = (id) => document.getElementById(id);
+const chat = $("chat"), entrada = $("entrada"), enviar = $("enviar");
+
+fetch("/api/config").then(r => r.json()).then(c => {
+  $("proveedor").textContent = c.modelo ? `${c.proveedor} · ${c.modelo}` : c.proveedor;
+}).catch(() => {});
+
+function burbuja(texto, clase, quien) {
+  const div = document.createElement("div");
+  div.className = "msg " + clase;
+  if (quien) {
+    const span = document.createElement("span");
+    span.className = "quien";
+    span.textContent = quien;
+    div.appendChild(span);
+  }
+  div.appendChild(document.createTextNode(texto));
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+
+ws.onopen = () => { $("punto").className = "punto on"; $("conexion").textContent = "conectado"; };
+ws.onclose = () => {
+  $("punto").className = "punto off";
+  $("conexion").textContent = "desconectado";
+  entrada.disabled = true; enviar.disabled = true;
+};
+
+ws.onmessage = (ev) => {
+  const evento = JSON.parse(ev.data);
+  if (evento.estado) pintarEstado(evento.estado);
+
+  if (evento.tipo === "mensaje") {
+    burbuja(evento.texto, "agente", "Agente");
+  } else if (evento.tipo === "pregunta") {
+    $("prompt").textContent = evento.texto;
+    entrada.disabled = false; enviar.disabled = false;
+    entrada.placeholder = "Escribí tu respuesta…";
+    entrada.focus();
+  } else if (evento.tipo === "fin") {
+    burbuja(evento.texto, "sistema");
+    $("prompt").textContent = "Ciclo completo.";
+    entrada.placeholder = "Ciclo terminado.";
+  } else if (evento.tipo === "error") {
+    burbuja(evento.texto, "error", "Error");
+    $("prompt").textContent = "";
+  }
+};
+
+function responder() {
+  if (entrada.disabled) return;
+  const texto = entrada.value;
+  burbuja(texto || "(enter)", "usuario", "Vos");
+  ws.send(JSON.stringify({ texto }));
+  entrada.value = "";
+  entrada.disabled = true; enviar.disabled = true;
+  entrada.placeholder = "Esperando al agente…";
+  $("prompt").textContent = "";
+}
+enviar.onclick = responder;
+entrada.onkeydown = (e) => { if (e.key === "Enter") responder(); };
+
+function pintarEstado(e) {
+  // fases
+  const iActual = FASES.indexOf(e.fase);
+  $("fases").innerHTML = FASES.map((f, i) => {
+    const clase = f === e.fase ? "activa" : (e.fase === "fin" || (iActual >= 0 && i < iActual)) ? "hecha" : "";
+    return `<span class="fase ${clase}">${ETIQUETAS[f]}</span>`;
+  }).join("");
+
+  // spec
+  const spec = e.spec || {};
+  $("spec").innerHTML = CAMPOS.map(c => {
+    const v = spec[c];
+    return `<div class="campo"><span class="k">${c}</span><span class="v ${v ? "" : "vacio"}">${v ? escapar(v) : "—"}</span></div>`;
+  }).join("") + (e.riesgos_asumidos?.length
+    ? `<div class="campo" style="margin-top:8px"><span class="k">riesgos asumidos</span><span class="v">${e.riesgos_asumidos.length}</span></div>`
+    : "");
+
+  // auditoría
+  if (e.semaforo) {
+    let html = `<div class="semaforo">${EMOJI_SEMAFORO[e.semaforo] || ""} ${e.semaforo}</div>`;
+    html += e.hallazgos.length
+      ? e.hallazgos.map(h => `<div class="hallazgo ${h.severidad}">
+           <span class="id">[${escapar(h.id)}] ${h.origen}</span><br>${escapar(h.mensaje)}
+           ${h.correccion_propuesta ? `<div class="fix">↳ ${escapar(h.correccion_propuesta)}</div>` : ""}
+         </div>`).join("")
+      : `<span class="vacio-panel">Sin hallazgos: la especificación es coherente.</span>`;
+    $("auditoria").innerHTML = html;
+  }
+
+  // construcción
+  if (e.stack) {
+    $("construccion").innerHTML =
+      `<div class="campo"><span class="k">plantilla</span><span class="v">${escapar(e.stack)}</span></div>` +
+      `<div class="campo"><span class="k">archivos</span><span class="v">${e.archivos.length}</span></div>` +
+      `<div class="archivos">${e.archivos.map(a => `<div>${escapar(a)}</div>`).join("")}</div>`;
+  }
+
+  // verificación
+  if (e.verificacion) {
+    const v = e.verificacion;
+    let html = `<div style="margin-bottom:10px"><span class="badge ${v.estado}">${v.estado.replace(/_/g, " ")}</span></div>`;
+    html += v.profundos.map(c =>
+      `<div class="chequeo"><span>${EMOJI_CHEQUEO[c.estado] || ""}</span>
+       <span class="id">${escapar(c.id)}</span>
+       <span style="color:var(--tenue)">${c.estado === "omitido" && !c.obligatorio ? "opcional" : ""}</span></div>`).join("");
+    if (v.errores_sintaxis.length) {
+      html += `<div style="margin-top:8px;color:var(--rojo);font-size:12.5px">Errores: ${v.errores_sintaxis.map(escapar).join(", ")}</div>`;
+    }
+    $("verificacion").innerHTML = html;
+  }
+}
+
+function escapar(s) {
+  const d = document.createElement("div");
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>
