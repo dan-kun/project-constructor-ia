@@ -83,6 +83,8 @@ Garantías de diseño:
   riesgo residual declarado: [`docs/SEGURIDAD.md`](docs/SEGURIDAD.md)
 - **Autoevaluación UX/UI** contra las heurísticas de Nielsen, con backlog priorizado:
   [`docs/UX.md`](docs/UX.md)
+- **Tecnologías y justificación**, incluidas las descartadas y por qué:
+  [`docs/TECNOLOGIAS.md`](docs/TECNOLOGIAS.md)
 - **Diseño completo**, roadmap, trabajo futuro y **matriz de capacidades** (qué materializa
   realmente cada plantilla y qué queda solo documentado): [`docs/DISENO.md`](docs/DISENO.md)
 
