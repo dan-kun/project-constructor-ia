@@ -89,6 +89,8 @@ Garantías de diseño:
   [`docs/TECNOLOGIAS.md`](docs/TECNOLOGIAS.md)
 - **Uso de IA en co-work** durante el desarrollo: qué falló y qué sorprendió:
   [`docs/IA-COWORK.md`](docs/IA-COWORK.md)
+- **Integración de un LLM/SLM local**: rol en la arquitectura, privacidad y limitaciones
+  reales frente a una API en la nube: [`docs/LLM-LOCAL.md`](docs/LLM-LOCAL.md)
 - **Diseño completo**, roadmap, trabajo futuro y **matriz de capacidades** (qué materializa
   realmente cada plantilla y qué queda solo documentado): [`docs/DISENO.md`](docs/DISENO.md)
 
