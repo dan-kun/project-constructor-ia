@@ -235,3 +235,50 @@ def test_flujo_completo_web_muestra_confirmacion_y_guarda_transcript(monkeypatch
     contenido = sesion.ruta_transcript.read_text(encoding="utf-8")
     assert "¿Confirmás la especificación?" in contenido
     assert sesion.ruta_proyecto is not None and sesion.ruta_proyecto.exists()
+
+
+# --- aislamiento de memoria entre visitantes -------------------------------------
+
+
+def test_memoria_se_aisla_por_sesion_por_defecto(monkeypatch, tmp_path):
+    """La spec de un visitante no debe persistirse en la memoria compartida
+    ni precargar la entrevista de otro (ver docs/SEGURIDAD.md, R12)."""
+    from pcia.web import sessions as web_sessions
+
+    class FakeProviderLocal:
+        def generate(self, system_prompt, messages):
+            return json.dumps({"message_to_user": "hola", "updates": {}, "done": False})
+
+    monkeypatch.setattr(
+        web_sessions, "crear_provider", lambda config: FakeProviderLocal()
+    )
+    compartida = tmp_path / "memory-compartida"
+    gestor = GestorSesiones(memory_dir=compartida)
+
+    sesion = gestor.crear({"provider": "openai_compat", "openai_compat": {}})
+
+    assert gestor.memoria_por_sesion is True
+    memoria_usada = Path(sesion.orquestador._memory_dir)
+    assert memoria_usada == sesion.directorio_base / "memory"
+    assert memoria_usada != compartida
+    # dos sesiones no comparten memoria entre sí
+    otra = gestor.crear({"provider": "openai_compat", "openai_compat": {}})
+    assert Path(otra.orquestador._memory_dir) != memoria_usada
+
+
+def test_memoria_compartida_es_opt_in(monkeypatch, tmp_path):
+    from pcia.web import sessions as web_sessions
+
+    class FakeProviderLocal:
+        def generate(self, system_prompt, messages):
+            return json.dumps({"message_to_user": "hola", "updates": {}, "done": False})
+
+    monkeypatch.setattr(
+        web_sessions, "crear_provider", lambda config: FakeProviderLocal()
+    )
+    compartida = tmp_path / "memory-compartida"
+    gestor = GestorSesiones(memory_dir=compartida, memoria_por_sesion=False)
+
+    sesion = gestor.crear({"provider": "openai_compat", "openai_compat": {}})
+
+    assert Path(sesion.orquestador._memory_dir) == compartida

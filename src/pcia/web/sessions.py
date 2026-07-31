@@ -86,11 +86,16 @@ class Sesion:
             return self._destino_seguro(texto)
         return texto
 
+    @property
+    def directorio_base(self) -> Path:
+        """Directorio propio de la sesión: proyecto, transcript y memoria."""
+        return Path(tempfile.gettempdir()) / "pcia-web-sesiones" / self.id
+
     def _destino_seguro(self, texto: str) -> str:
         """Confina el destino de construcción a un directorio propio de la
         sesión, ignorando cualquier ruta absoluta o traversal que haya
         tipeado el visitante — ver nota de seguridad más arriba."""
-        base = Path(tempfile.gettempdir()) / "pcia-web-sesiones" / self.id
+        base = self.directorio_base
         crudo = texto.strip() or (
             self.orquestador.spec.nombre if self.orquestador else ""
         ) or "proyecto"
@@ -113,16 +118,28 @@ class Sesion:
             return None
 
     def guardar_transcript(self) -> Path:
-        base = Path(tempfile.gettempdir()) / "pcia-web-sesiones" / self.id
-        self.ruta_transcript = self.transcript.guardar(base / "conversacion.txt")
+        self.ruta_transcript = self.transcript.guardar(
+            self.directorio_base / "conversacion.txt"
+        )
         return self.ruta_transcript
 
 
 class GestorSesiones:
     """Crea y administra sesiones de entrevista en memoria de proceso."""
 
-    def __init__(self, memory_dir: Path) -> None:
+    def __init__(self, memory_dir: Path, memoria_por_sesion: bool = True) -> None:
+        """``memoria_por_sesion`` aísla la memoria de cada visitante.
+
+        La memoria es una función del producto: el Aprendizaje precarga la
+        entrevista con las preferencias de proyectos anteriores. Eso es
+        deseable en una máquina de un solo dueño (la CLI), pero en una
+        instancia compartida significaría que la especificación de un
+        visitante —que puede incluir información de su cliente— se persiste
+        junto a las demás y precarga la entrevista de otro. Por eso el
+        aislamiento es el default y compartir es opt-in explícito.
+        """
         self._memory_dir = memory_dir
+        self.memoria_por_sesion = memoria_por_sesion
         self._sesiones: dict[str, Sesion] = {}
         self._lock = threading.Lock()
 
@@ -132,9 +149,14 @@ class GestorSesiones:
         modelo = (config_proveedor.get(nombre) or {}).get("model")
 
         sesion = Sesion(id=uuid.uuid4().hex)
+        memory_dir = (
+            sesion.directorio_base / "memory"
+            if self.memoria_por_sesion
+            else self._memory_dir
+        )
         orquestador = Orquestador(
             provider,
-            memory_dir=self._memory_dir,
+            memory_dir=memory_dir,
             entrada=sesion.entrada,
             salida=sesion.salida,
             proveedor=f"{nombre}:{modelo}" if modelo else nombre or None,

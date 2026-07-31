@@ -36,12 +36,24 @@ MEMORY_DIR = Path("memory")
 # un SSRF en un despliegue público. ``pcia-web`` lo activa; Render no.
 VAR_DESTINOS_PRIVADOS = "PCIA_WEB_PERMITIR_DESTINOS_PRIVADOS"
 
+# La memoria de proyectos se aísla por sesión salvo que se pida lo contrario:
+# en una instancia compartida, la spec de un visitante no debe persistirse
+# junto a las demás ni precargar la entrevista de otro (ver sessions.py).
+VAR_MEMORIA_COMPARTIDA = "PCIA_WEB_MEMORIA_COMPARTIDA"
+
+
+def _flag_activo(nombre: str) -> bool:
+    return os.environ.get(nombre, "").strip().lower() in ("1", "true", "si")
+
 
 def _permite_destinos_privados() -> bool:
-    return os.environ.get(VAR_DESTINOS_PRIVADOS, "").strip().lower() in ("1", "true", "si")
+    return _flag_activo(VAR_DESTINOS_PRIVADOS)
 
 app = FastAPI(title="Project Constructor IA — demo web")
-gestor = GestorSesiones(memory_dir=MEMORY_DIR)
+gestor = GestorSesiones(
+    memory_dir=MEMORY_DIR,
+    memoria_por_sesion=not _flag_activo(VAR_MEMORIA_COMPARTIDA),
+)
 
 
 @app.middleware("http")
@@ -201,10 +213,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="No permitir descubrir modelos en localhost o redes privadas",
     )
+    parser.add_argument(
+        "--memoria-compartida",
+        action="store_true",
+        help="Usar una única memoria para todas las sesiones, como la CLI "
+        "(solo tiene sentido en una máquina de un solo usuario)",
+    )
     args = parser.parse_args(argv)
 
     if not args.sin_destinos_privados:
         os.environ.setdefault(VAR_DESTINOS_PRIVADOS, "1")
+    if args.memoria_compartida:
+        os.environ[VAR_MEMORIA_COMPARTIDA] = "1"
+        gestor.memoria_por_sesion = False
     print(f"Project Constructor IA — http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
