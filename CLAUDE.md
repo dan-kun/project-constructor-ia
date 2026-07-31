@@ -35,12 +35,17 @@ src/pcia/
 ├── adapters/      # implementaciones de LLMProvider por proveedor
 ├── agents/        # Analista de Documentos, Entrevistador, Auditor, Constructor, Verificador, Aprendizaje (+ prompts/ en .md)
 ├── orchestrator/  # loop principal y máquina de estados del ciclo
+├── web/           # adaptador de navegador (FastAPI + SSE): app, sessions, destinos, static/
+├── transcript.py  # transcripción de la sesión (la usan los adaptadores, no el dominio)
 ├── config.py      # carga de config.yaml y factory de proveedores
-└── cli.py         # punto de entrada (script `pcia`)
+└── cli.py         # punto de entrada (script `pcia`; el web es `pcia-web`)
 tests/             # pytest; usar FakeProvider (adaptador falso) para testear agentes sin red
 memory/            # persistencia local (JSON por proyecto en Fase 1; evaluar SQLite en Fase 5)
-docs/              # DISENO.md (diseño completo y roadmap)
+docs/              # DISENO, ARQUITECTURA (diagramas), SEGURIDAD, UX, TECNOLOGIAS, IA-COWORK, LLM-LOCAL
 ```
+
+**Los adaptadores de IO no tocan el dominio**: el orquestador recibe `entrada`/`salida` como
+callables, así que consola y navegador se enchufan en el mismo puerto.
 
 ## Convenciones
 
@@ -66,7 +71,10 @@ docs/              # DISENO.md (diseño completo y roadmap)
 - [x] Corridas reales end-to-end con LLM local (llama.cpp/Qwen3-30B): FastAPI ok; NestJS destapó el bug `npm ci` sin lockfile (corregido)
 - [x] Mejoras post-feedback de medio ciclo (75/100 + review externo): política de severidad (rojo bloqueante, amarillo asumible con propagación a la entrega), estado agregado de verificación (aprobado / con advertencias / inconcluso / fallido, chequeos obligatorios vs. opcionales), README con comandos determinísticos + chequeo de referencias a archivos, baseline de seguridad (SECRET_KEY obligatoria fail-fast, contenedores no-root, confirmación para Dockerfiles reescritos por el LLM), bloques condicionales en plantillas (PostgreSQL materializado en FastAPI: compose + deps + `db.py`, verificado en contenedor real), métricas en el registro (proveedor, duración) y matriz de capacidades en DISENO.md §8
 
-**Roadmap completo (7 fases).** Posibles próximos pasos: casos de prueba pendientes con transcripts reales (Fase 7 en vivo, Odoo, adaptadores claude/openai), más condicionales (auth, otras bases), soporte PDF en el Analista, reglas candidatas del Aprendizaje al Auditor (con aprobación humana).
+- [x] Fase 8: adaptador web (FastAPI + SSE, sesiones con TTL, elección de proveedor desde el navegador, descarga del proyecto en `.zip` y de la conversación en `.txt`, panel de estado del ciclo en vivo, `render.yaml` para desplegar). Integra la rama de Paulo con el panel de estado portado del adaptador previo
+- [x] Entrega final: repo público con CI (pytest en 3.10 y 3.12), diagramas Mermaid, log de ciberseguridad con riesgo residual, autoevaluación UX/UI contra Nielsen, tabla de tecnologías con justificación, uso de IA en co-work y reflexión sobre LLM/SLM local (Parte 2)
+
+**Roadmap completo (8 fases).** Posibles próximos pasos: límites de recursos en los contenedores de verificación, más condicionales de plantilla (auth, otras bases), soporte PDF en el Analista, `EmbeddingProvider` para RAG sobre documentación de clientes (DISENO §9.1) y reglas candidatas del Aprendizaje al Auditor (con aprobación humana).
 
 ## Comandos
 
