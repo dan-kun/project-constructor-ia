@@ -1,5 +1,7 @@
 # Project Constructor IA
 
+[![CI](https://github.com/dan-kun/project-constructor-ia/actions/workflows/ci.yml/badge.svg)](https://github.com/dan-kun/project-constructor-ia/actions/workflows/ci.yml)
+
 Sistema multiagente para la **creación asistida y auditada** de la estructura inicial
 (scaffold) de proyectos de software: entrevista al usuario, audita la coherencia técnica
 de lo que pidió, construye, verifica lo construido con builds reales y aprende de cada
