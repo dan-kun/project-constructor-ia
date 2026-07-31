@@ -81,6 +81,8 @@ Garantías de diseño:
   real): [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md)
 - **Log de ciberseguridad**: riesgos identificados, medidas implementadas con su evidencia y
   riesgo residual declarado: [`docs/SEGURIDAD.md`](docs/SEGURIDAD.md)
+- **Autoevaluación UX/UI** contra las heurísticas de Nielsen, con backlog priorizado:
+  [`docs/UX.md`](docs/UX.md)
 - **Diseño completo**, roadmap, trabajo futuro y **matriz de capacidades** (qué materializa
   realmente cada plantilla y qué queda solo documentado): [`docs/DISENO.md`](docs/DISENO.md)
 
