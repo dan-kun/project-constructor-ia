@@ -24,6 +24,16 @@ class RespuestaFalsa:
             raise httpx.HTTPStatusError("error", request=None, response=self)  # type: ignore[arg-type]
 
 
+@pytest.fixture(autouse=True)
+def permitir_destinos_internos(monkeypatch):
+    """Estos tests ejercitan el manejo de errores HTTP, no la política de
+    destinos: usan localhost como ejemplo, que por defecto está bloqueado
+    (ver test_web_destinos.py para la defensa contra SSRF)."""
+    from pcia.web import app as modulo_app
+
+    monkeypatch.setenv(modulo_app.VAR_DESTINOS_PRIVADOS, "1")
+
+
 @pytest.fixture
 def cliente() -> TestClient:
     return TestClient(app)

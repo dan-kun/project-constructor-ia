@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -18,6 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from pcia.web.destinos import DestinoNoPermitidoError, validar_url_externa
 from pcia.web.sessions import (
     ConfigError,
     GestorSesiones,
@@ -28,6 +30,15 @@ from pcia.web.sessions import (
 
 RAIZ = Path(__file__).parent
 MEMORY_DIR = Path("memory")
+
+# Descubrir modelos contra un destino interno (localhost, red privada) solo se
+# habilita explícitamente: es legítimo en una corrida local contra Ollama, y es
+# un SSRF en un despliegue público. ``pcia-web`` lo activa; Render no.
+VAR_DESTINOS_PRIVADOS = "PCIA_WEB_PERMITIR_DESTINOS_PRIVADOS"
+
+
+def _permite_destinos_privados() -> bool:
+    return os.environ.get(VAR_DESTINOS_PRIVADOS, "").strip().lower() in ("1", "true", "si")
 
 app = FastAPI(title="Project Constructor IA — demo web")
 gestor = GestorSesiones(memory_dir=MEMORY_DIR)
@@ -86,6 +97,12 @@ def descubrir_modelos(datos: DescubrirModelosRequest) -> dict[str, list[str]]:
     no habilita CORS para su API, pero el servidor sí puede alcanzarla sin
     ese problema (CORS es una restricción del navegador, no del backend)."""
     base_url = datos.base_url.rstrip("/")
+    try:
+        validar_url_externa(
+            base_url, permitir_privadas=_permite_destinos_privados()
+        )
+    except DestinoNoPermitidoError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     headers = {"Authorization": f"Bearer {datos.api_key}"} if datos.api_key else {}
     try:
         resp = httpx.get(f"{base_url}/models", headers=headers, timeout=15.0)
@@ -161,3 +178,37 @@ def descargar_transcript(sesion_id: str) -> FileResponse:
 
 # Sirve el frontend estático al final: no debe tapar las rutas /api/*.
 app.mount("/", StaticFiles(directory=RAIZ / "static", html=True), name="static")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Punto de entrada del script ``pcia-web`` (corrida local).
+
+    Al ser una corrida local explícita habilita el descubrimiento de modelos
+    contra destinos internos (Ollama en localhost). Un despliegue público se
+    arranca con ``uvicorn pcia.web.app:app`` y no lo habilita.
+    """
+    import argparse
+
+    import uvicorn
+
+    parser = argparse.ArgumentParser(
+        prog="pcia-web", description="Interfaz web de Project Constructor IA"
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--sin-destinos-privados",
+        action="store_true",
+        help="No permitir descubrir modelos en localhost o redes privadas",
+    )
+    args = parser.parse_args(argv)
+
+    if not args.sin_destinos_privados:
+        os.environ.setdefault(VAR_DESTINOS_PRIVADOS, "1")
+    print(f"Project Constructor IA — http://{args.host}:{args.port}")
+    uvicorn.run(app, host=args.host, port=args.port)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
