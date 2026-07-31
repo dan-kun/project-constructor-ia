@@ -78,9 +78,11 @@
   <div id="estado" class="estado">Conectando…</div>
   <div id="mensajes" class="mensajes" role="log" aria-live="polite"></div>
   <form id="form-input" class="form-input">
-    <textarea id="input-texto" rows="1" placeholder="Escribí tu respuesta… (Enter para enviar, Shift+Enter para salto de línea)" disabled></textarea>
+    <textarea id="input-texto" rows="1" placeholder="Escribí tu respuesta…"
+              title="Enter para enviar, Shift+Enter para salto de línea" disabled></textarea>
     <button type="submit" disabled>Enviar</button>
   </form>
+  <p class="ayuda-input">Enter para enviar · Shift+Enter para salto de línea</p>
   <div class="descargas">
     <a id="descargar-transcript" class="oculto" href="#">Descargar conversación (.txt)</a>
     <a id="descargar" class="oculto" href="#">Descargar proyecto generado (.zip)</a>

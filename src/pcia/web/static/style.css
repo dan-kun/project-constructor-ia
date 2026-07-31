@@ -205,16 +205,41 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   gap: 1rem;
-  align-items: start;
+  align-items: stretch;
+  max-width: min(1180px, 96vw);
+  margin: 1.5rem auto;
+}
+
+/* Dentro del grid los paneles ocupan su columna: el ancho lo define la
+   grilla, no el max-width que .panel usa cuando está suelto en la página. */
+.area-sesion > .panel {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+}
+
+/* El chat crece a lo alto y la lista de mensajes se queda con el sobrante,
+   así el cuadro no colapsa cuando todavía no hay conversación. */
+.area-sesion > #chat.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: min(72vh, 640px);
+}
+
+.area-sesion .mensajes {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
 }
 
 @media (max-width: 900px) {
   .area-sesion { grid-template-columns: 1fr; }
   .lateral { order: -1; }
   .archivos { max-height: 140px; }
+  .area-sesion > #chat.panel { min-height: 60vh; }
 }
 
-.lateral { padding: 0; overflow: hidden; }
+.lateral { padding: 0; overflow: hidden; align-self: start; }
 
 .titulo-lateral {
   margin: 0;
@@ -307,3 +332,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .badge.aprobado_con_advertencias { color: #d99a00; border-color: #d99a00; }
 .badge.inconcluso { color: var(--muted); }
 .badge.fallido { color: var(--error); border-color: var(--error); }
+
+/* La ayuda de teclado vive fuera del placeholder: dentro se cortaba en una
+   caja de una sola línea (y desaparecía apenas el usuario escribía algo). */
+.ayuda-input {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
