@@ -13,6 +13,8 @@ para producción multi-instancia (ver limitaciones en el informe).
 from __future__ import annotations
 
 import queue
+import re
+import tempfile
 import threading
 import time
 import uuid
@@ -23,8 +25,18 @@ from typing import Any
 from pcia.config import ConfigError, crear_provider
 from pcia.domain.ports import LLMProviderError
 from pcia.orchestrator.loop import Orquestador
+from pcia.transcript import Transcript
 
 TTL_SESION_SEGUNDOS = 3600  # limpieza de sesiones abandonadas
+
+# Coincide con el texto exacto de loop.py::_fase_construccion. El Constructor
+# solo valida que el destino esté vacío, no dónde vive (correcto para el
+# CLI, donde el destino lo elige el dueño de esa máquina) — en la demo web
+# un visitante cualquiera no puede decidir una ruta arbitraria en el
+# filesystem del servidor, así que acá se confina siempre a un directorio
+# propio de la sesión, sin importar lo que haya tipeado.
+_MARCA_PROMPT_DESTINO = "¿Dónde genero el proyecto?"
+_CARACTERES_NO_SEGUROS = re.compile(r"[^a-zA-Z0-9_-]+")
 
 
 class SesionInvalidaError(Exception):
@@ -46,13 +58,47 @@ class Sesion:
     ultimo_acceso: float = field(default_factory=time.monotonic)
     orquestador: Orquestador | None = None
     ruta_proyecto: Path | None = None
+    transcript: Transcript = field(default_factory=Transcript)
+    ruta_transcript: Path | None = None
 
     def entrada(self, prompt: str) -> str:
-        # El prompt del Orquestador ya viaja como mensaje de "salida" antes
-        # de bloquear acá; no hace falta reenviarlo.
-        return self._entrada_q.get()
+        # A diferencia de la CLI (donde ``input(prompt)`` imprime la
+        # pregunta sola), acá hay que reenviarla explícitamente al chat: si
+        # no, preguntas como "¿Confirmás la especificación?" o "¿Asumís el
+        # riesgo?" nunca llegan al navegador y la sesión queda esperando una
+        # respuesta a algo que el usuario no vio. El "> " genérico de los
+        # turnos normales de entrevista se omite porque la pregunta real ya
+        # viajó por un ``salida()`` propio un instante antes.
+        if _MARCA_PROMPT_DESTINO in prompt:
+            # No reenviamos el prompt original: incluye una ruta sugerida del
+            # filesystem del servidor (irrelevante y algo ruidosa acá), y de
+            # todos modos la respuesta se confina siempre en _destino_seguro.
+            self.salida(
+                "¿Cómo querés nombrar la carpeta del proyecto? (opcional — se "
+                "genera en un directorio propio de tu sesión en el servidor, "
+                "no en tu computadora; lo descargás como .zip al final)"
+            )
+        elif prompt.strip() and prompt.strip() != ">":
+            self.salida(prompt.strip())
+        texto = self._entrada_q.get()
+        self.transcript.registrar_entrada(texto)
+        if _MARCA_PROMPT_DESTINO in prompt:
+            return self._destino_seguro(texto)
+        return texto
+
+    def _destino_seguro(self, texto: str) -> str:
+        """Confina el destino de construcción a un directorio propio de la
+        sesión, ignorando cualquier ruta absoluta o traversal que haya
+        tipeado el visitante — ver nota de seguridad más arriba."""
+        base = Path(tempfile.gettempdir()) / "pcia-web-sesiones" / self.id
+        crudo = texto.strip() or (
+            self.orquestador.spec.nombre if self.orquestador else ""
+        ) or "proyecto"
+        nombre = _CARACTERES_NO_SEGUROS.sub("-", crudo).strip("-") or "proyecto"
+        return str(base / nombre)
 
     def salida(self, texto: str) -> None:
+        self.transcript.registrar_salida(texto)
         self._salida_q.put(Evento(tipo="mensaje", texto=texto))
 
     def enviar_input(self, texto: str) -> None:
@@ -65,6 +111,11 @@ class Sesion:
             return self._salida_q.get(timeout=timeout)
         except queue.Empty:
             return None
+
+    def guardar_transcript(self) -> Path:
+        base = Path(tempfile.gettempdir()) / "pcia-web-sesiones" / self.id
+        self.ruta_transcript = self.transcript.guardar(base / "conversacion.txt")
+        return self.ruta_transcript
 
 
 class GestorSesiones:
@@ -91,12 +142,19 @@ class GestorSesiones:
         sesion.orquestador = orquestador
 
         def _correr() -> None:
+            # El transcript se guarda ANTES de notificar el evento terminal:
+            # el frontend habilita el link de descarga apenas ve "fin"/"error",
+            # así que el archivo tiene que existir para ese momento, no después.
             try:
                 orquestador.ejecutar()
                 sesion.ruta_proyecto = orquestador.ruta_proyecto
-                sesion._salida_q.put(Evento(tipo="fin"))
             except Exception as exc:  # noqa: BLE001 — se reporta al usuario, no se oculta
+                sesion.transcript.registrar_error(str(exc))
+                sesion.guardar_transcript()
                 sesion._salida_q.put(Evento(tipo="error", texto=str(exc)))
+                return
+            sesion.guardar_transcript()
+            sesion._salida_q.put(Evento(tipo="fin"))
 
         sesion.hilo = threading.Thread(target=_correr, daemon=True)
         with self._lock:

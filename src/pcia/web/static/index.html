@@ -17,7 +17,9 @@
   <p class="hint">
     El sistema es agnóstico del modelo: este formulario simplemente arma el mismo
     <code>config.yaml</code> que usa la CLI, pero con tus datos, para esta sesión.
-    Nada se guarda en el servidor.
+    Nada se guarda en el servidor. Para no retipear esto cada vez, el navegador
+    lo recuerda localmente (<code>localStorage</code>, solo en este equipo) —
+    <a href="#" id="olvidar-preferencias">olvidar lo guardado</a>.
   </p>
 
   <div class="campo">
@@ -29,15 +31,41 @@
     <label for="anthropic-key">API key de Anthropic</label>
     <input id="anthropic-key" type="password" placeholder="sk-ant-…" autocomplete="off" />
     <label for="anthropic-model">Modelo</label>
-    <input id="anthropic-model" type="text" placeholder="claude-sonnet-4-6" />
+    <select id="anthropic-model">
+      <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6 (default del proyecto)</option>
+      <option value="claude-sonnet-5">claude-sonnet-5</option>
+      <option value="claude-opus-5">claude-opus-5</option>
+      <option value="claude-haiku-4-5-20251001">claude-haiku-4-5</option>
+      <option value="otro">Otro (especificar)…</option>
+    </select>
+    <input id="anthropic-model-custom" type="text" placeholder="nombre exacto del modelo" class="oculto" />
   </div>
 
   <div id="campos-openai" class="campo oculto">
     <label for="openai-url">Base URL</label>
-    <input id="openai-url" type="text" placeholder="http://localhost:11434/v1" />
+    <div class="fila-con-boton">
+      <input id="openai-url" type="text" value="http://localhost:11434/v1" />
+      <button type="button" id="usar-openrouter" class="boton-secundario">Usar OpenRouter</button>
+    </div>
+
     <label for="openai-model">Modelo</label>
-    <input id="openai-model" type="text" placeholder="qwen2.5:14b" />
-    <label for="openai-key">API key (opcional; Ollama la ignora)</label>
+    <div class="fila-con-boton">
+      <select id="openai-model">
+        <option value="qwen2.5:14b" selected>qwen2.5:14b (Ollama local, default del proyecto)</option>
+        <option value="qwen2.5:7b">qwen2.5:7b (Ollama local)</option>
+        <option value="llama3.2">llama3.2 (Ollama local)</option>
+        <option value="phi3">phi3 (Ollama local)</option>
+        <option value="gemma2">gemma2 (Ollama local)</option>
+        <option value="nvidia/nemotron-3-ultra-550b-a55b:free">nvidia/nemotron-3-ultra-550b-a55b:free (OpenRouter, probado — rápido y buen razonamiento)</option>
+        <option value="google/gemma-4-31b-it:free">google/gemma-4-31b-it:free (OpenRouter — pool gratuito con rate-limit frecuente)</option>
+        <option value="otro">Otro (especificar)…</option>
+      </select>
+      <button type="button" id="cargar-modelos" class="boton-secundario">🔄 Cargar disponibles</button>
+    </div>
+    <p id="estado-modelos" class="hint oculto"></p>
+    <input id="openai-model-custom" type="text" placeholder="ej.: llama-3.3-70b-versatile (Groq), etc." class="oculto" />
+
+    <label for="openai-key">API key (opcional en Ollama local; requerida en Groq/OpenRouter/etc.)</label>
     <input id="openai-key" type="password" autocomplete="off" />
   </div>
 
@@ -49,10 +77,13 @@
   <div id="estado" class="estado">Conectando…</div>
   <div id="mensajes" class="mensajes" role="log" aria-live="polite"></div>
   <form id="form-input" class="form-input">
-    <input id="input-texto" type="text" placeholder="Escribí tu respuesta…" autocomplete="off" disabled />
+    <textarea id="input-texto" rows="1" placeholder="Escribí tu respuesta… (Enter para enviar, Shift+Enter para salto de línea)" disabled></textarea>
     <button type="submit" disabled>Enviar</button>
   </form>
-  <a id="descargar" class="oculto" href="#">Descargar proyecto generado (.zip)</a>
+  <div class="descargas">
+    <a id="descargar-transcript" class="oculto" href="#">Descargar conversación (.txt)</a>
+    <a id="descargar" class="oculto" href="#">Descargar proyecto generado (.zip)</a>
+  </div>
 </main>
 
 <script src="/app.js"></script>

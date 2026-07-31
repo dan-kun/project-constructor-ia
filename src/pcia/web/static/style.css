@@ -43,12 +43,17 @@ body {
 .topbar p { margin: 0; color: var(--muted); font-size: 0.9rem; }
 
 .panel {
-  max-width: 640px;
+  max-width: min(640px, 94vw);
   margin: 1.5rem auto;
   padding: 1.5rem;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
+}
+
+/* La entrevista en sí se lee mejor con más ancho que el formulario inicial. */
+#chat.panel {
+  max-width: min(900px, 94vw);
 }
 
 .oculto { display: none !important; }
@@ -57,14 +62,32 @@ body {
 
 .campo { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 1rem; }
 .campo label { font-size: 0.85rem; color: var(--muted); }
-.campo input[type="text"], .campo input[type="password"] {
+.campo input[type="text"], .campo input[type="password"], .campo select {
   padding: 0.55rem 0.7rem;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
   font-size: 0.95rem;
+  font-family: inherit;
+  width: 100%;
 }
+
+.fila-con-boton { display: flex; gap: 0.5rem; }
+.fila-con-boton input, .fila-con-boton select { flex: 1; min-width: 0; }
+
+.boton-secundario {
+  flex-shrink: 0;
+  padding: 0.55rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.boton-secundario:disabled { opacity: 0.5; cursor: not-allowed; }
 
 button {
   padding: 0.6rem 1.1rem;
@@ -105,7 +128,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 
 .burbuja {
-  background: var(--bubble);
+  max-width: 85%;
   border-radius: 10px;
   padding: 0.7rem 0.9rem;
   white-space: pre-wrap;
@@ -113,25 +136,62 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   line-height: 1.45;
 }
 
-.form-input { display: flex; gap: 0.5rem; }
-.form-input input {
+.burbuja-sistema {
+  background: var(--bubble);
+  color: var(--text);
+  align-self: flex-start;
+  border-bottom-left-radius: 3px;
+}
+
+.burbuja-usuario {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  align-self: flex-end;
+  border-bottom-right-radius: 3px;
+}
+
+.form-input { display: flex; gap: 0.5rem; align-items: flex-end; }
+.form-input textarea {
   flex: 1;
+  resize: none;
+  min-height: 2.6rem;
+  max-height: 9rem;
   padding: 0.6rem 0.8rem;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
   font-size: 0.95rem;
+  font-family: inherit;
+  line-height: 1.4;
+  overflow-y: auto;
+}
+.form-input button { flex-shrink: 0; }
+
+.descargas {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
 }
 
-#descargar {
-  display: block;
-  margin-top: 1rem;
+.descargas a {
+  flex: 1;
+  min-width: 12rem;
   text-align: center;
   padding: 0.6rem;
   border-radius: 8px;
-  background: var(--accent);
-  color: var(--accent-contrast);
   text-decoration: none;
   font-size: 0.9rem;
+}
+
+#descargar {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+#descargar-transcript {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
 }
