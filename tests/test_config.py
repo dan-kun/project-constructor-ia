@@ -4,7 +4,8 @@ import pytest
 
 from pcia.adapters.anthropic_api import AnthropicAPIProvider
 from pcia.adapters.openai_compat import OpenAICompatProvider
-from pcia.config import ConfigError, cargar_config, crear_provider
+from pcia.config import ConfigError, cargar_config, cargar_limites, crear_provider
+from pcia.orchestrator.loop import LimitesCiclo
 
 
 def test_cargar_config_valida(tmp_path):
@@ -67,3 +68,36 @@ def test_config_del_repo_es_valida():
     """El config.yaml versionado en el repo debe cargar sin errores."""
     config = cargar_config("config.yaml")
     assert config["provider"] in ("anthropic_api", "openai_compat", "claude_subscription")
+
+
+# --- límites de ciclo configurables --------------------------------------------
+
+
+def test_cargar_limites_sin_seccion_usa_los_defaults():
+    assert cargar_limites({}) == LimitesCiclo()
+
+
+def test_cargar_limites_aplica_overrides():
+    limites = cargar_limites({"limites": {"max_turnos_entrevista": 10}})
+    assert limites.max_turnos_entrevista == 10
+    assert limites.max_ciclos_coherencia == LimitesCiclo().max_ciclos_coherencia
+
+
+def test_cargar_limites_clave_desconocida_falla():
+    with pytest.raises(ConfigError, match="max_turnos"):
+        cargar_limites({"limites": {"max_turnos": 5}})
+
+
+def test_cargar_limites_valor_no_positivo_falla():
+    with pytest.raises(ConfigError, match="entero positivo"):
+        cargar_limites({"limites": {"max_turnos_entrevista": 0}})
+
+
+def test_cargar_limites_valor_no_entero_falla():
+    with pytest.raises(ConfigError, match="entero positivo"):
+        cargar_limites({"limites": {"max_turnos_entrevista": "treinta"}})
+
+
+def test_config_del_repo_tiene_limites_validos():
+    config = cargar_config("config.yaml")
+    assert cargar_limites(config) == LimitesCiclo()

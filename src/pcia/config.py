@@ -6,14 +6,17 @@ de familia de API no requiere tocar código (ver docs/DISENO.md §6).
 
 from __future__ import annotations
 
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from pcia.domain.ports import LLMProvider
+from pcia.orchestrator.loop import LimitesCiclo
 
 PROVEEDORES_VALIDOS = ("anthropic_api", "openai_compat", "claude_subscription")
+_CAMPOS_LIMITES = {campo.name for campo in fields(LimitesCiclo)}
 
 
 class ConfigError(Exception):
@@ -31,6 +34,29 @@ def cargar_config(ruta: str | Path) -> dict[str, Any]:
     if not isinstance(datos, dict):
         raise ConfigError("config.yaml debe ser un mapeo YAML.")
     return datos
+
+
+def cargar_limites(config: dict[str, Any]) -> LimitesCiclo:
+    """Lee la sección opcional ``limites`` de config.yaml (ver docs/DISENO.md §4).
+
+    Sin la sección, se usan los defaults de ``LimitesCiclo`` (los mismos
+    valores que el sistema usó siempre). Falla temprano ante una clave
+    desconocida o un valor que no sea un entero positivo, en vez de dejar
+    pasar un typo silencioso.
+    """
+    seccion = config.get("limites") or {}
+    if not isinstance(seccion, dict):
+        raise ConfigError("'limites' en config.yaml debe ser un mapeo.")
+    desconocidas = sorted(set(seccion) - _CAMPOS_LIMITES)
+    if desconocidas:
+        raise ConfigError(
+            f"'limites' tiene claves desconocidas: {', '.join(desconocidas)}. "
+            f"Válidas: {', '.join(sorted(_CAMPOS_LIMITES))}"
+        )
+    for clave, valor in seccion.items():
+        if not isinstance(valor, int) or isinstance(valor, bool) or valor < 1:
+            raise ConfigError(f"'limites.{clave}' debe ser un entero positivo, no {valor!r}.")
+    return LimitesCiclo(**seccion)
 
 
 def crear_provider(config: dict[str, Any]) -> LLMProvider:

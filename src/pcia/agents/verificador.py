@@ -49,6 +49,11 @@ RUTA_PROMPT_BUILD = Path(__file__).parent / "prompts" / "corrector_build.md"
 TIMEOUT_BUILD_SEGUNDOS = 600.0
 TIMEOUT_COMANDO_SEGUNDOS = 180.0
 MAX_DETALLE = 1500
+# Límites de recursos para el código generado por el LLM que se ejecuta
+# dentro de estos contenedores (ver docs/SEGURIDAD.md R2): sin esto, un
+# Dockerfile hostil o descontrolado puede consumir CPU/memoria sin límite.
+LIMITE_MEMORIA_DOCKER = "1g"
+LIMITE_CPUS_DOCKER = "2"
 # Contexto acotado para el corrector de builds (modelos locales tienen poco).
 MAX_CONTENIDO_ARCHIVO = 4000
 # Archivos que no afectan builds: no gastan contexto del corrector.
@@ -186,9 +191,18 @@ class Verificador:
                     detalle="docker no está disponible en este entorno",
                 )
             elif verificacion.tipo == "docker_build":
+                # Sin --network=none: el build necesita red para instalar
+                # dependencias (pip/npm). El límite de memoria/CPU sí aplica
+                # siempre — acota el costo de un Dockerfile hostil o de un
+                # build descontrolado sin restringir lo que el stack necesita.
                 chequeo = _correr(
                     verificacion.id,
-                    ["docker", "build", "-t", etiqueta_imagen, "."],
+                    [
+                        "docker", "build",
+                        "--memory", LIMITE_MEMORIA_DOCKER,
+                        "--cpu-quota", str(int(LIMITE_CPUS_DOCKER) * 100_000),
+                        "-t", etiqueta_imagen, ".",
+                    ],
                     raiz,
                     TIMEOUT_BUILD_SEGUNDOS,
                 )
@@ -201,9 +215,17 @@ class Verificador:
                         detalle="requiere una imagen construida (docker_build ok)",
                     )
                 else:
+                    # El smoke test corre la imagen ya construida: no
+                    # necesita red, así que acá sí se cierra del todo.
                     chequeo = _correr(
                         verificacion.id,
-                        ["docker", "run", "--rm", etiqueta_imagen, *verificacion.comando],
+                        [
+                            "docker", "run", "--rm",
+                            "--memory", LIMITE_MEMORIA_DOCKER,
+                            "--cpus", LIMITE_CPUS_DOCKER,
+                            "--network", "none",
+                            etiqueta_imagen, *verificacion.comando,
+                        ],
                         raiz,
                         TIMEOUT_COMANDO_SEGUNDOS,
                     )

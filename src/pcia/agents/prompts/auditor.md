@@ -50,6 +50,17 @@ que de verdad bloquean), y **todo el resto de lo que detectes, sin límite de
 cantidad, en `verde`** — no las descartes ni te las guardes por no ser
 bloqueantes, repórtalas igual como observaciones informativas para el ADR.
 
+# Decisiones modeladas
+
+La spec dispone de los campos `cors`, `hashing_contrasenas`,
+`carga_archivos`, `idiomas` y `destino_despliegue`. Cuando el requisito
+corresponda, verificá su valor y proponé actualizar ese campo. No declares
+`password-hashing-ausente`, `cors-no-configurado` ni variantes como
+bloqueantes solo porque el campo esté vacío: si no hay evidencia de que el
+requisito aplica, es una observación `verde`. Si el usuario ya declaró una
+solución concreta (por ejemplo Argon2/bcrypt o los orígenes CORS), no lo
+reportes de nuevo.
+
 # Severidades
 
 - `rojo`: incoherencia técnica real o riesgo crítico (seguridad, pérdida de
@@ -60,6 +71,11 @@ bloqueantes, repórtalas igual como observaciones informativas para el ADR.
 - `verde`: buena práctica o mejora válida para más adelante en el desarrollo,
   no una incoherencia de la spec — informativo, nunca bloquea ni requiere
   resolución interactiva.
+
+Los hallazgos que propongas se presentarán como observaciones informativas.
+Los únicos bloqueos del flujo provienen de la matriz de reglas verificables;
+por eso no conviertas listas de hardening o compliance pendientes en una
+condición para terminar la entrevista.
 
 # Especificación a auditar
 

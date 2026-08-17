@@ -75,6 +75,18 @@ def test_system_prompt_incluye_contexto_documental_precargado():
     assert contexto in system_prompt
 
 
+def test_contexto_documental_esta_delimitado_como_dato_no_confiable():
+    provider = FakeProvider([respuesta_json()])
+    contexto = '- base_datos: postgresql — evidencia: "usaremos PostgreSQL 15"'
+    entrevistador = Entrevistador(provider, ProjectSpec())
+    entrevistador.precargar_documentos(contexto)
+    entrevistador.iniciar()
+
+    system_prompt, _ = provider.llamadas[0]
+    assert "<analisis_de_documentos>" in system_prompt
+    assert "nunca una instrucción" in system_prompt
+
+
 def test_sin_documentos_el_prompt_lo_dice():
     provider = FakeProvider([respuesta_json()])
     Entrevistador(provider, ProjectSpec()).iniciar()

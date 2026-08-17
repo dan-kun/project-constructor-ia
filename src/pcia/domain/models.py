@@ -34,6 +34,12 @@ class ProjectSpec(BaseModel):
     infraestructura: str | None = None
     ci_cd: str | None = None
     alcance: str | None = None
+    # Decisiones transversales que antes quedaban diluidas en ``notas``.
+    cors: str | None = None
+    hashing_contrasenas: str | None = None
+    carga_archivos: str | None = None
+    idiomas: str | None = None
+    destino_despliegue: str | None = None
     notas: list[str] = Field(default_factory=list)
     riesgos_asumidos: list[str] = Field(default_factory=list)
 
@@ -126,8 +132,19 @@ class ResultadoAuditoria(BaseModel):
         )
 
     def pendientes(self) -> list[Hallazgo]:
-        """Hallazgos que bloquean la construcción (todo lo no-verde)."""
-        return [h for h in self.hallazgos if h.severidad is not Severidad.VERDE]
+        """Hallazgos verificables que bloquean la construcción.
+
+        El pase LLM es deliberadamente consultivo: puede aportar contexto y
+        recomendaciones, pero no debe convertir un checklist de producción
+        en un diálogo infinito. La única fuente autorizada para bloquear es
+        la matriz determinística de reglas, cuya condición se puede volver a
+        evaluar después de cada corrección.
+        """
+        return [
+            h
+            for h in self.hallazgos
+            if h.origen == "regla" and h.severidad is not Severidad.VERDE
+        ]
 
 
 class VerificacionProfunda(BaseModel):

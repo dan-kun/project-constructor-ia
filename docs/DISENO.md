@@ -39,7 +39,11 @@ Secuencia: Análisis de documentos (opcional) → Entrevista → Auditoría → 
   puede corregirse o asumirse explícitamente (queda documentado en el ADR como riesgo
   aceptado y se advierte en la entrega); un hallazgo **rojo es bloqueante** — incluye las
   reglas no negociables como secretos hardcodeados — y solo admite corregir o abortar.
-  Repite hasta spec coherente.
+  Repite hasta spec coherente. Cada hallazgo resuelto cierra con una confirmación explícita
+  del usuario (acotada a `max_ajustes_por_hallazgo`) antes de pasar al siguiente: el
+  Entrevistador suele cerrar su respuesta con una pregunta propia, y sin ese turno quedaba
+  huérfana en cuanto había más de un hallazgo pendiente (bug real corregido, ver
+  `docs/UX.md` §H3).
 - **Ciclo de corrección** (Verificación → Construcción): ante falla, informar + corregir +
   re-verificar. **Máximo 3 reintentos por componente**, luego escalar al usuario.
 - **Ciclo de corrección profunda** (Fase 7): ante falla de build/smoke, el corrector recibe
@@ -55,6 +59,21 @@ Secuencia: Análisis de documentos (opcional) → Entrevista → Auditoría → 
   matriz (mismo principio de "decisiones de alto impacto las confirma el humano").
 - Mini-ciclo transversal: **toda salida LLM malformada se reintenta con el error como
   feedback** (máx. 3), es el mismo patrón de corrección a escala micro.
+- Todos los topes de esta sección (turnos de entrevista, ciclos de coherencia, intentos de
+  destino, correcciones por archivo, correcciones de build) son los defaults de
+  `LimitesCiclo` (`orchestrator/loop.py`) y se pueden ajustar desde la sección opcional
+  `limites` de `config.yaml`, sin tocar código — útil para acortar una corrida que se estanca
+  con un modelo local lento, o para darle más margen a un modelo débil.
+- **Checkpoint de progreso**: la `ProjectSpec` en curso solo se persistía al llegar a
+  `ENTREGA`; cualquier falla antes de eso perdía todo lo respondido. Ahora el Orquestador
+  reescribe un checkpoint con la spec actual después de cada fase, y también si la corrida
+  se interrumpe (excepción o Ctrl+C) — se borra al completarse con éxito. Una corrida nueva
+  puede arrancar con `Orquestador(spec_inicial=...)`, precargada con esa spec: el
+  Entrevistador solo pregunta por lo que falte. La CLI lo expone como `pcia --resume
+  <checkpoint>`; la web, como el botón "Corregir algo" (reutiliza la spec que el propio panel
+  de estado ya muestra, sin pasar por un archivo). Es el mecanismo que resuelve, a la vez,
+  "un fallo obliga a volver a cero" y "no se puede corregir una respuesta ya enviada": ambos
+  tenían la misma causa — no había nada del progreso persistido antes del final del ciclo.
 
 ## 5. Reglas y restricciones
 

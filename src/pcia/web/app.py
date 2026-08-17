@@ -12,14 +12,16 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from pcia.web.destinos import DestinoNoPermitidoError, validar_url_externa
+from pcia.web.ratelimit import LimitadorTasa, LimiteExcedidoError
 from pcia.web.sessions import (
     ConfigError,
     GestorSesiones,
@@ -54,6 +56,19 @@ gestor = GestorSesiones(
     memory_dir=MEMORY_DIR,
     memoria_por_sesion=not _flag_activo(VAR_MEMORIA_COMPARTIDA),
 )
+# Cada sesión abre un hilo propio: sin límite, un visitante podría crear
+# sesiones sin parar. 10 por minuto alcanza para uso normal (una demo no
+# arranca 10 entrevistas en un minuto) y frena el abuso trivial.
+limitador = LimitadorTasa(max_eventos=10, ventana_segundos=60.0)
+
+
+def _ip_cliente(request: Request) -> str:
+    """IP de origen, best-effort: sin proxy de confianza configurado, no
+    hardening contra spoofing de ``X-Forwarded-For`` — alcanza para frenar
+    abuso trivial de un mismo origen, no para un despliegue detrás de un
+    proxy hostil (ver docs/SEGURIDAD.md para el resto de las limitaciones
+    conocidas de la superficie web)."""
+    return request.client.host if request.client else "desconocido"
 
 
 @app.middleware("http")
@@ -67,11 +82,24 @@ async def sin_cache_en_estaticos(request, call_next):
     return respuesta
 
 
+class DocumentoRequest(BaseModel):
+    nombre: str
+    contenido: str
+
+
 class NuevaSesionRequest(BaseModel):
     provider: str
     model: str = ""
     api_key: str = ""
     base_url: str = ""
+    # Documentos del cliente (.md/.txt) para precargar la entrevista (ver
+    # docs/UX.md U9): equivalente web de ``pcia --docs``, antes solo
+    # disponible por CLI.
+    documentos: list[DocumentoRequest] = Field(default_factory=list)
+    # Campos de la spec ya respondidos en una sesión anterior (ver
+    # docs/UX.md U3/U4/U5): permite arrancar de nuevo sin reempezar la
+    # entrevista de cero, tras un error o para corregir algo ya enviado.
+    spec_inicial: dict[str, Any] = Field(default_factory=dict)
 
 
 class InputRequest(BaseModel):
@@ -83,11 +111,24 @@ class DescubrirModelosRequest(BaseModel):
     api_key: str = ""
 
 
+@app.get("/health")
+def health() -> dict[str, str]:
+    """Chequeo de vida para plataformas de hosting (Render, balanceadores)."""
+    return {"status": "ok"}
+
+
 @app.post("/api/sessions")
-def crear_sesion(datos: NuevaSesionRequest) -> dict[str, str]:
+def crear_sesion(datos: NuevaSesionRequest, request: Request) -> dict[str, str]:
+    try:
+        limitador.verificar(_ip_cliente(request))
+    except LimiteExcedidoError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     try:
         config_proveedor = validar_config_proveedor(datos.model_dump())
-        sesion = gestor.crear(config_proveedor)
+        documentos = [(doc.nombre, doc.contenido) for doc in datos.documentos]
+        sesion = gestor.crear(
+            config_proveedor, documentos=documentos, spec_inicial=datos.spec_inicial
+        )
     except (ConfigError, LLMProviderError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"session_id": sesion.id}
@@ -116,21 +157,25 @@ def descubrir_modelos(datos: DescubrirModelosRequest) -> dict[str, list[str]]:
     except DestinoNoPermitidoError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     headers = {"Authorization": f"Bearer {datos.api_key}"} if datos.api_key else {}
-    try:
-        resp = httpx.get(f"{base_url}/models", headers=headers, timeout=15.0)
-        resp.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"{base_url} devolvió {exc.response.status_code}"
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"No se pudo consultar {base_url}: {exc}"
-        ) from exc
-    nombres = extraer_nombres_de_modelos(resp.json())
-    if not nombres:
-        raise HTTPException(status_code=502, detail="La respuesta no trae modelos.")
-    return {"modelos": nombres}
+    urls = [f"{base_url}/models"]
+    if base_url.endswith("/v1"):
+        # Ollama también expone su catálogo nativo aquí. Sirve con versiones
+        # que aún no implementan /v1/models completamente.
+        urls.append(f"{base_url[:-3]}/api/tags")
+    ultimo_error = "La respuesta no trae modelos."
+    for url in urls:
+        try:
+            resp = httpx.get(url, headers=headers, timeout=15.0)
+            resp.raise_for_status()
+            nombres = extraer_nombres_de_modelos(resp.json())
+            if nombres:
+                return {"modelos": nombres}
+            ultimo_error = "La respuesta no trae modelos."
+        except httpx.HTTPStatusError as exc:
+            ultimo_error = f"{url} devolvió {exc.response.status_code}"
+        except httpx.HTTPError as exc:
+            ultimo_error = f"No se pudo consultar {url}: {exc}"
+    raise HTTPException(status_code=502, detail=ultimo_error)
 
 
 def extraer_nombres_de_modelos(datos: object) -> list[str]:
@@ -165,9 +210,15 @@ async def eventos(sesion_id: str) -> StreamingResponse:
             if evento is None:
                 yield ": keepalive\n\n"  # comentario SSE: mantiene viva la conexión
                 continue
-            carga = {"tipo": evento.tipo, "texto": evento.texto}
+            carga = {
+                "tipo": evento.tipo,
+                "texto": evento.texto,
+                "espera_respuesta": evento.espera_respuesta,
+            }
             if evento.estado is not None:
                 carga["estado"] = evento.estado
+            if evento.opciones is not None:
+                carga["opciones"] = evento.opciones
             yield f"data: {json.dumps(carga, ensure_ascii=False)}\n\n"
             if evento.tipo in ("fin", "error"):
                 return

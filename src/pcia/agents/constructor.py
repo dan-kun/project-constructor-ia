@@ -15,6 +15,7 @@ generadas: si el LLM falla, no queda un scaffold a medias.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path, PurePosixPath
 
@@ -239,6 +240,7 @@ def _renderizar(
         "[[NOMBRE_KEBAB]]": slug_kebab(nombre),
         "[[PAQUETE]]": slug_snake(nombre),
         "[[DESCRIPCION]]": spec.descripcion or "",
+        "[[CORS_ORIGINS]]": json.dumps(_origenes_cors(spec.cors)),
     }
     activos = [c for c in plantilla.condicionales if _condicional_activo(c, spec)]
     # Todo fragmento declarado arranca vacío (el token desaparece si su
@@ -282,6 +284,15 @@ def _renderizar(
         for verificacion in plantilla.verificaciones
     ]
     return archivos, verificaciones, render(plantilla.instrucciones)
+
+
+def _origenes_cors(configuracion: str | None) -> list[str]:
+    """Extrae orígenes explícitos sin abrir CORS por defecto."""
+    if configuracion:
+        origenes = re.findall(r"https?://[^\s,;]+", configuracion)
+        if origenes:
+            return origenes
+    return ["http://localhost:3000"]
 
 
 def _validar_destino(destino: Path) -> None:

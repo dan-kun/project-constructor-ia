@@ -120,6 +120,41 @@ condicionales:
             with SessionLocal() as session:
                 yield session
 
+  - id: cors
+    cuando: {campo: cors, contiene: [habilitado, permitir, externo, origen, "si", "sí"]}
+    fragmentos:
+      "[[MIDDLEWARE_EXTRA]]": |
+
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[[CORS_ORIGINS]],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+  - id: hashing-contrasenas
+    cuando: {campo: hashing_contrasenas, contiene: [argon2, bcrypt, habilitado, "si", "sí"]}
+    fragmentos:
+      "[[DEPENDENCIAS_EXTRA]]": "\n    \"pwdlib[argon2]>=0.2\","
+    archivos:
+      "src/[[PAQUETE]]/security.py": |
+        """Hashing de contraseñas con Argon2; nunca almacenar texto plano."""
+        from pwdlib import PasswordHash
+
+
+        _password_hash = PasswordHash.recommended()
+
+
+        def hash_password(password: str) -> str:
+            return _password_hash.hash(password)
+
+
+        def verify_password(password: str, hashed_password: str) -> bool:
+            return _password_hash.verify(password, hashed_password)
+
 archivos:
   "pyproject.toml": |
     [build-system]
@@ -197,6 +232,7 @@ archivos:
     from [[PAQUETE]].config import settings
 
     app = FastAPI(title="[[NOMBRE]]", description="[[DESCRIPCION]]")
+    [[MIDDLEWARE_EXTRA]]
 
 
     @app.get("/health")

@@ -22,7 +22,7 @@ web = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
 # El extra dev tiene que poder correr la suite completa: los tests del
 # adaptador web usan el TestClient de fastapi (httpx ya es del core) y
 # ejercitan el arranque de pcia-web, que importa uvicorn.
-dev = ["pytest>=8.0", "fastapi>=0.115", "uvicorn>=0.30"]
+dev = ["pytest>=8.0", "fastapi>=0.115", "uvicorn>=0.30", "ruff>=0.6"]
 
 [project.scripts]
 pcia = "pcia.cli:main"
@@ -38,3 +38,15 @@ pcia = [
     "agents/templates/*.yaml",
     "web/static/*",
 ]
+
+[tool.ruff]
+line-length = 105
+target-version = "py310"
+
+[tool.ruff.lint]
+# El proyecto genera código con ruff opcional para sus plantillas (FastAPI);
+# es consistente pedirle lo mismo al propio código del sistema. Alcance
+# acotado a errores reales (F) y de estilo básico (E, B): nada de reglas de
+# modernización (UP) ni de orden de imports (I), que reordenarían todo el
+# código existente sin corregir ningún defecto.
+select = ["E", "F", "B"]

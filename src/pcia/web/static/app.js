@@ -9,8 +9,16 @@ const elInputTexto = document.getElementById("input-texto");
 const elDescargar = document.getElementById("descargar");
 const elDescargarTranscript = document.getElementById("descargar-transcript");
 const elErrorSetup = document.getElementById("error-setup");
+const elCorregirSesion = document.getElementById("corregir-sesion");
 
 let sesionId = null;
+let fuenteEventos = null;
+// Último estado conocido del ciclo (foto de cada evento SSE) y config del
+// proveedor de la sesión activa: lo que permite editar una respuesta ya
+// enviada sin perder el resto de la conversación (ver
+// ``historialTurnos``/``iniciarEdicion`` más abajo y docs/UX.md U3/U4/U5).
+let ultimoEstado = null;
+let payloadProveedorActual = null;
 
 // Preferencias del formulario: viven solo en el navegador de quien las
 // carga (localStorage), nunca en el servidor — mismo nivel de confianza que
@@ -110,6 +118,12 @@ document.getElementById("usar-openrouter").addEventListener("click", () => {
   document.getElementById("openai-key").focus();
 });
 
+document.getElementById("usar-ollama").addEventListener("click", () => {
+  document.getElementById("openai-url").value = "http://localhost:11434/v1";
+  document.getElementById("openai-key").value = "";
+  document.getElementById("cargar-modelos").click();
+});
+
 function poblarSelectorModelos(nombres) {
   const select = document.getElementById("openai-model");
   const seleccionPrevia = select.value;
@@ -202,6 +216,29 @@ function agregarMensaje(texto, esUsuario = false) {
   burbuja.textContent = texto;
   elMensajes.appendChild(burbuja);
   elMensajes.scrollTop = elMensajes.scrollHeight;
+  return burbuja;
+}
+
+// Burbuja de una respuesta del usuario que todavía se puede corregir (ver
+// ``historialTurnos`` e ``iniciarEdicion`` más abajo): igual que
+// ``agregarMensaje``, pero con un botón de lápiz que abre la edición inline.
+function agregarBurbujaEditable(texto, indiceTurno) {
+  const burbuja = document.createElement("div");
+  burbuja.className = "burbuja burbuja-usuario burbuja-editable";
+  const span = document.createElement("span");
+  span.className = "burbuja-texto";
+  span.textContent = texto;
+  const boton = document.createElement("button");
+  boton.type = "button";
+  boton.className = "btn-editar";
+  boton.title = "Editar esta respuesta";
+  boton.setAttribute("aria-label", "Editar esta respuesta");
+  boton.textContent = "✏️";
+  boton.addEventListener("click", () => iniciarEdicion(indiceTurno));
+  burbuja.append(span, boton);
+  elMensajes.appendChild(burbuja);
+  elMensajes.scrollTop = elMensajes.scrollHeight;
+  return burbuja;
 }
 
 function autogrow() {
@@ -220,6 +257,74 @@ function habilitarInput(habilitado) {
   if (habilitado) elInputTexto.focus();
 }
 
+// --- indicador de actividad -------------------------------------------------------
+// Sin esto no había ninguna señal de que el agente estaba trabajando: el
+// campo de entrada se deshabilitaba y ahí quedaba, indistinguible de una
+// sesión colgada — sobre todo con un modelo local (10-40s por turno) o
+// mientras corre un build de Docker en la verificación profunda.
+
+const TEXTO_ESPERA_LARGA = "Seguimos esperando al agente (puede tardar más con un "
+  + "modelo local, o si está corriendo un build de Docker)…";
+const UMBRAL_ESPERA_LARGA_MS = 15000;
+let temporizadorEsperaLarga = null;
+
+function mostrarIndicadorProcesando() {
+  ocultarIndicadorProcesando();
+  const burbuja = document.createElement("div");
+  burbuja.className = "burbuja burbuja-sistema burbuja-procesando";
+  burbuja.id = "indicador-procesando";
+  burbuja.innerHTML = "<span></span><span></span><span></span>";
+  burbuja.setAttribute("aria-label", "El agente está procesando");
+  elMensajes.appendChild(burbuja);
+  elMensajes.scrollTop = elMensajes.scrollHeight;
+
+  clearTimeout(temporizadorEsperaLarga);
+  temporizadorEsperaLarga = setTimeout(() => {
+    setEstado(TEXTO_ESPERA_LARGA, true);
+  }, UMBRAL_ESPERA_LARGA_MS);
+}
+
+function ocultarIndicadorProcesando() {
+  clearTimeout(temporizadorEsperaLarga);
+  const existente = document.getElementById("indicador-procesando");
+  if (existente) existente.remove();
+}
+
+const elDocumentos = document.getElementById("documentos-cliente");
+const elListaDocumentos = document.getElementById("lista-documentos");
+
+elDocumentos.addEventListener("change", () => {
+  const nombres = Array.from(elDocumentos.files).map((archivo) => archivo.name);
+  elListaDocumentos.textContent = nombres.length ? `Seleccionados: ${nombres.join(", ")}` : "";
+});
+
+function leerDocumento(archivo) {
+  return new Promise((resolve, reject) => {
+    const lector = new FileReader();
+    lector.onload = () => resolve({ nombre: archivo.name, contenido: lector.result });
+    lector.onerror = () => reject(new Error(`no se pudo leer ${archivo.name}`));
+    lector.readAsText(archivo);
+  });
+}
+
+async function leerDocumentosSeleccionados() {
+  return Promise.all(Array.from(elDocumentos.files).map(leerDocumento));
+}
+
+async function crearSesion(payload, mostrarError) {
+  const resp = await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const detalle = await resp.json().catch(() => ({}));
+    mostrarError(detalle.detail || "No se pudo iniciar la sesión.");
+    return null;
+  }
+  return resp.json();
+}
+
 async function iniciarSesion() {
   elErrorSetup.classList.add("oculto");
   guardarPreferencias();
@@ -233,48 +338,244 @@ async function iniciarSesion() {
     payload.model = valorModelo("openai-model", "openai-model-custom");
     payload.api_key = document.getElementById("openai-key").value;
   }
-
-  const resp = await fetch("/api/sessions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!resp.ok) {
-    const detalle = await resp.json().catch(() => ({}));
-    elErrorSetup.textContent = detalle.detail || "No se pudo iniciar la sesión.";
+  try {
+    payload.documentos = await leerDocumentosSeleccionados();
+  } catch (err) {
+    elErrorSetup.textContent = err.message;
     elErrorSetup.classList.remove("oculto");
     return;
   }
-  const datos = await resp.json();
+  payloadProveedorActual = payload;
+
+  const datos = await crearSesion(payload, (msg) => {
+    elErrorSetup.textContent = msg;
+    elErrorSetup.classList.remove("oculto");
+  });
+  if (!datos) return;
   sesionId = datos.session_id;
+  historialTurnos = [];
+  edicionPendiente = null;
 
   elSetup.classList.add("oculto");
   document.getElementById("area-sesion").classList.remove("oculto");
   setEstado("Conectado — esperando al Entrevistador…", true);
+  mostrarIndicadorProcesando();
   conectarEventos();
 }
 
+const elOpcionesDecision = document.getElementById("opciones-decision");
+
+// Decisiones de opción fija del orquestador (confirmar la spec, asumir un
+// riesgo, etc.) llegan con `opciones` en el evento: se ofrecen como botones
+// además del campo de texto libre, que sigue disponible siempre (ver
+// docs/UX.md U6 — antes había que tipear 's'/'N'/'abortar' a mano).
+function mostrarOpciones(opciones) {
+  elOpcionesDecision.innerHTML = "";
+  if (!opciones || !opciones.length) {
+    elOpcionesDecision.classList.add("oculto");
+    return;
+  }
+  for (const opcion of opciones) {
+    const boton = document.createElement("button");
+    boton.type = "button";
+    boton.className = "boton-opcion";
+    boton.textContent = opcion.texto;
+    boton.addEventListener("click", () => enviarRespuesta(opcion.valor, opcion.texto));
+    elOpcionesDecision.appendChild(boton);
+  }
+  elOpcionesDecision.classList.remove("oculto");
+}
+
+// Edición inline de una respuesta ya enviada (ver docs/UX.md U3/U4/U5): la
+// versión anterior de "corregir algo" abría una sesión nueva con TODA la
+// spec actual precargada — incluida la última respuesta, que es
+// exactamente la que el usuario quería poder cambiar, así que quedaba fija
+// y solo se podía "pedir un ajuste" en texto libre a ciegas, y de paso se
+// vaciaba toda la conversación visible. Ahora cada respuesta de la
+// entrevista guarda la foto de la spec previa a ella (``historialTurnos``);
+// editarla trunca el chat desde ese punto (nunca lo vacía entero), reabre
+// una sesión con esa foto como punto de partida — el campo que se está
+// corrigiendo vuelve a quedar "faltante" — y reenvía el texto corregido en
+// cuanto el Entrevistador repite la pregunta, así que desde afuera se ve
+// como editar un mensaje de chat común, no como empezar de nuevo.
+let historialTurnos = [];
+let edicionPendiente = null;
+
+function esTurnoDeEntrevista() {
+  return !!(ultimoEstado && ultimoEstado.fase === "entrevista");
+}
+
+function iniciarEdicion(indice) {
+  const turno = historialTurnos[indice];
+  if (!turno) return;
+  document.querySelectorAll(".edicion-burbuja").forEach((el) => el.remove());
+
+  const area = document.createElement("div");
+  area.className = "edicion-burbuja";
+  const aviso = document.createElement("p");
+  aviso.textContent = "Se va a rehacer la conversación desde esta respuesta.";
+  const textarea = document.createElement("textarea");
+  textarea.value = turno.textoOriginal;
+  textarea.rows = Math.min(6, Math.max(1, turno.textoOriginal.split("\n").length));
+  const botones = document.createElement("div");
+  botones.className = "edicion-botones";
+  const btnCancelar = document.createElement("button");
+  btnCancelar.type = "button";
+  btnCancelar.className = "boton-secundario";
+  btnCancelar.textContent = "Cancelar";
+  btnCancelar.addEventListener("click", () => area.remove());
+  const btnGuardar = document.createElement("button");
+  btnGuardar.type = "button";
+  btnGuardar.textContent = "Guardar y continuar";
+  btnGuardar.addEventListener("click", () => confirmarEdicion(indice, textarea.value));
+  textarea.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey) {
+      ev.preventDefault();
+      confirmarEdicion(indice, textarea.value);
+    }
+  });
+  botones.append(btnCancelar, btnGuardar);
+  area.append(aviso, textarea, botones);
+  turno.burbuja.after(area);
+  textarea.focus();
+}
+
+async function confirmarEdicion(indice, nuevoTexto) {
+  const texto = nuevoTexto.trim();
+  if (!texto) return;
+  const turno = historialTurnos[indice];
+  if (!turno || !payloadProveedorActual) return;
+
+  if (fuenteEventos) fuenteEventos.close();
+
+  // Trunca la conversación visible desde esta respuesta en adelante (nunca
+  // la vacía entera): lo anterior sigue siendo válido, no cambió.
+  let nodo = turno.burbuja;
+  while (nodo) {
+    const siguiente = nodo.nextSibling;
+    nodo.remove();
+    nodo = siguiente;
+  }
+  historialTurnos.length = indice;
+
+  mostrarOpciones(null);
+  ocultarIndicadorProcesando();
+  elDescargar.classList.add("oculto");
+  elDescargarTranscript.classList.add("oculto");
+  setEstado("Retomando la conversación con tu corrección…", true);
+  habilitarInput(false);
+
+  const specInicial = Object.fromEntries(
+    Object.entries(turno.specAntes || {}).filter(
+      ([, valor]) => valor && (!Array.isArray(valor) || valor.length)
+    )
+  );
+  const payload = { ...payloadProveedorActual, documentos: [], spec_inicial: specInicial };
+
+  const datos = await crearSesion(payload, (msg) => {
+    agregarMensaje(`⚠️ No se pudo retomar la edición: ${msg}`, false);
+  });
+  if (!datos) {
+    setEstado("No se pudo retomar la edición", false);
+    return;
+  }
+  sesionId = datos.session_id;
+  ultimoEstado = null;
+  edicionPendiente = texto;
+  mostrarIndicadorProcesando();
+  conectarEventos();
+}
+
+// Atajo: corrige directamente la última respuesta de la entrevista, que es
+// el caso más común (justo acabás de contestar algo y te diste cuenta de
+// que está mal).
+elCorregirSesion.addEventListener("click", () => {
+  if (!historialTurnos.length) return;
+  const indice = historialTurnos.length - 1;
+  iniciarEdicion(indice);
+  historialTurnos[indice].burbuja.scrollIntoView({ block: "center", behavior: "smooth" });
+});
+
+async function enviarRespuesta(texto, etiquetaMostrada, opts = {}) {
+  mostrarOpciones(null);
+  const mostrado = etiquetaMostrada || texto || "(enter)";
+  if (opts.editable) {
+    const indice = historialTurnos.length;
+    const burbuja = agregarBurbujaEditable(mostrado, indice);
+    historialTurnos.push({
+      burbuja,
+      textoOriginal: texto,
+      specAntes: ultimoEstado ? JSON.parse(JSON.stringify(ultimoEstado.spec)) : {},
+    });
+    elCorregirSesion.classList.remove("oculto");
+  } else {
+    agregarMensaje(mostrado, true);
+  }
+  elInputTexto.value = "";
+  autogrow();
+  habilitarInput(false);
+  setEstado("Procesando…", true);
+  mostrarIndicadorProcesando();
+  await fetch(`/api/sessions/${sesionId}/input`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ texto }),
+  });
+}
+
 function conectarEventos() {
-  const fuente = new EventSource(`/api/sessions/${sesionId}/events`);
+  fuenteEventos = new EventSource(`/api/sessions/${sesionId}/events`);
+  const fuente = fuenteEventos;
   fuente.onmessage = (evt) => {
     const data = JSON.parse(evt.data);
-    if (data.estado) pintarEstado(data.estado);
+    if (data.estado) {
+      pintarEstado(data.estado);
+      ultimoEstado = data.estado;
+    }
     if (data.tipo === "mensaje") {
-      agregarMensaje(data.texto);
-      setEstado("Tu turno", true);
-      habilitarInput(true);
+      if (data.texto) agregarMensaje(data.texto);
+      if (data.espera_respuesta) {
+        // Recién acá el orquestador se detuvo a esperar una respuesta real
+        // (ver web/sessions.py::espera_respuesta). La mayoría de los
+        // mensajes son progreso informativo — el ciclo sigue solo, sin
+        // esperar nada — así que habilitar el input en cualquier mensaje
+        // (como antes) mentía sobre si había algo que hacer.
+        ocultarIndicadorProcesando();
+        if (edicionPendiente !== null) {
+          // La sesión nueva volvió a preguntar lo que se acaba de "vaciar"
+          // al editar: reenviamos el texto corregido en el acto, en vez de
+          // esperar que el usuario lo retipee — así la edición se siente
+          // como reemplazar un mensaje, no como retomar la entrevista.
+          const texto = edicionPendiente;
+          edicionPendiente = null;
+          enviarRespuesta(texto, texto, { editable: esTurnoDeEntrevista() });
+          return;
+        }
+        setEstado("Tu turno", true);
+        habilitarInput(true);
+        mostrarOpciones(data.opciones);
+      } else {
+        setEstado("El agente está trabajando…", true);
+        habilitarInput(false);
+        mostrarOpciones(null);
+        mostrarIndicadorProcesando();
+      }
     } else if (data.tipo === "fin") {
+      ocultarIndicadorProcesando();
       setEstado("Entrevista y construcción finalizadas", true);
       habilitarInput(false);
+      mostrarOpciones(null);
       elDescargar.href = `/api/sessions/${sesionId}/download`;
       elDescargar.classList.remove("oculto");
       elDescargarTranscript.href = `/api/sessions/${sesionId}/transcript`;
       elDescargarTranscript.classList.remove("oculto");
       fuente.close();
     } else if (data.tipo === "error") {
+      ocultarIndicadorProcesando();
       agregarMensaje(`⚠️ Error: ${data.texto}`, false);
       setEstado("La sesión terminó con un error", false);
       habilitarInput(false);
+      mostrarOpciones(null);
       // El proyecto puede no existir (la construcción puede no haberse
       // alcanzado), pero la conversación siempre queda disponible: es
       // justamente en este caso donde más sirve tener el registro completo.
@@ -284,6 +585,7 @@ function conectarEventos() {
     }
   };
   fuente.onerror = () => {
+    ocultarIndicadorProcesando();
     setEstado("Conexión interrumpida — recargá la página para reintentar", false);
   };
 }
@@ -291,16 +593,7 @@ function conectarEventos() {
 elFormInput.addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const texto = elInputTexto.value;
-  agregarMensaje(texto || "(enter)", true);
-  elInputTexto.value = "";
-  autogrow();
-  habilitarInput(false);
-  setEstado("Procesando…", true);
-  await fetch(`/api/sessions/${sesionId}/input`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ texto }),
-  });
+  await enviarRespuesta(texto, texto || "(enter)", { editable: esTurnoDeEntrevista() });
 });
 
 elInputTexto.addEventListener("input", autogrow);

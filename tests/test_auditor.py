@@ -92,6 +92,40 @@ def test_api_sin_autenticacion_es_amarillo():
     assert "api-sin-autenticacion" in [h.id for h in resultado.hallazgos]
 
 
+def test_alcance_niega_prototipo_no_dispara_hexagonal_alcance_minimo():
+    """Falso positivo real del matching por substring: 'no es un prototipo'
+    contiene la palabra 'prototipo'. La exclusión evita el hallazgo."""
+    spec = spec_base(
+        arquitectura="hexagonal", alcance="no es un prototipo, es un producto a escala"
+    )
+    resultado, _ = auditar(spec)
+    assert "hexagonal-alcance-minimo" not in [h.id for h in resultado.hallazgos]
+
+
+def test_microservicios_con_base_de_datos_compartida_es_amarillo():
+    spec = spec_base(
+        arquitectura="microservicios",
+        descripcion="tres servicios que comparten una misma base de datos",
+    )
+    resultado, _ = auditar(spec)
+    assert "microservicios-base-datos-compartida" in [h.id for h in resultado.hallazgos]
+
+
+def test_mongodb_con_transacciones_relacionales_es_amarillo():
+    spec = spec_base(
+        base_datos="mongodb",
+        descripcion="necesita transacciones que crucen varias colecciones",
+    )
+    resultado, _ = auditar(spec)
+    assert "mongodb-uso-relacional" in [h.id for h in resultado.hallazgos]
+
+
+def test_mongodb_sin_mencion_relacional_no_dispara_la_regla():
+    spec = spec_base(base_datos="mongodb", descripcion="catálogo de productos simple")
+    resultado, _ = auditar(spec)
+    assert "mongodb-uso-relacional" not in [h.id for h in resultado.hallazgos]
+
+
 def test_riesgo_asumido_no_se_vuelve_a_reportar():
     spec = spec_base(arquitectura="hexagonal", alcance="prototipo")
     spec.riesgos_asumidos.append("hexagonal-alcance-minimo: lo asumo, va a crecer")
@@ -119,7 +153,7 @@ def test_hallazgo_llm_se_incorpora_con_origen_llm():
     resultado, _ = auditar(spec_base(), [respuesta])
     assert len(resultado.hallazgos) == 1
     assert resultado.hallazgos[0].origen == "llm"
-    assert resultado.semaforo() is Severidad.AMARILLO
+    assert resultado.semaforo() is Severidad.VERDE
 
 
 def test_llm_no_puede_duplicar_un_id_de_regla():
@@ -143,6 +177,21 @@ def test_llm_no_puede_reportar_un_riesgo_asumido():
         {"hallazgos": [{"id": "latencia-region", "severidad": "amarillo", "mensaje": "x"}]}
     )
     resultado, _ = auditar(spec, [reincidente])
+    assert resultado.hallazgos == []
+
+
+@pytest.mark.parametrize(
+    ("id_hallazgo", "campo", "valor"),
+    [
+        ("password-hashing-ausente", "hashing_contrasenas", "Argon2 con pwdlib"),
+        ("cors-no-configurado", "cors", "permitir http://localhost:3000"),
+    ],
+)
+def test_llm_no_repite_control_ya_configurado(id_hallazgo, campo, valor):
+    respuesta = json.dumps(
+        {"hallazgos": [{"id": id_hallazgo, "severidad": "rojo", "mensaje": "x"}]}
+    )
+    resultado, _ = auditar(spec_base(**{campo: valor}), [respuesta])
     assert resultado.hallazgos == []
 
 

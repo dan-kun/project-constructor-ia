@@ -19,5 +19,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
+      - run: ruff check src tests
       # La suite es hermética: usa un proveedor falso, sin red ni Docker.
       - run: pytest -q

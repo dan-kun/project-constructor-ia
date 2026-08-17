@@ -68,6 +68,7 @@ reglas:
         contiene: [hexagonal, "puertos y adaptadores", "ports and adapters"]
       - campos: [alcance]
         contiene: [prototipo, "prueba de concepto", poc, minimo, descartable]
+        no_contiene: ["no es un prototipo", "ya no es", "dejo de ser", "no es una prueba de concepto"]
 
   - id: microservicios-alcance-chico
     severidad: amarillo
@@ -83,6 +84,52 @@ reglas:
         contiene: [microservicio, microservicios]
       - campos: [alcance]
         contiene: [prototipo, poc, mvp, "prueba de concepto", minimo, chico, "equipo chico"]
+        no_contiene: ["no es un prototipo", "no es un mvp", "ya no es", "equipo grande"]
+
+  - id: microservicios-base-datos-compartida
+    severidad: amarillo
+    mensaje: >-
+      Microservicios que comparten una única base de datos pierden la
+      autonomía de despliegue y esquema que justifica la arquitectura: un
+      cambio de esquema de un servicio puede romper a otro sin que lo note
+      hasta producción.
+    correccion: >-
+      Dar a cada servicio su propia base de datos (o esquema aislado) y
+      comunicar cambios de datos entre servicios por API o eventos, no por
+      acceso directo a las tablas de otro servicio.
+    condiciones:
+      - campos: [arquitectura]
+        contiene: [microservicio, microservicios]
+      - campos: [descripcion, notas, base_datos]
+        contiene:
+          - "base de datos compartida"
+          - "misma base de datos"
+          - "una sola base de datos"
+          - "db compartida"
+          - "base compartida entre servicios"
+
+  - id: mongodb-uso-relacional
+    severidad: amarillo
+    mensaje: >-
+      MongoDB para datos con relaciones complejas o transacciones que
+      cruzan varias colecciones renuncia a las garantías (integridad
+      referencial, transacciones ACID multi-tabla) que una base relacional
+      da de forma nativa.
+    correccion: >-
+      Si el dominio tiene relaciones fuertes entre entidades o necesita
+      transacciones multi-tabla, evaluar PostgreSQL/MySQL; si se mantiene
+      MongoDB, documentar cómo se van a manejar esas garantías a nivel de
+      aplicación.
+    condiciones:
+      - campos: [base_datos]
+        contiene: [mongodb, mongo]
+      - campos: [descripcion, notas]
+        contiene:
+          - transacciones
+          - "integridad referencial"
+          - "relaciones complejas"
+          - joins
+          - "consistencia fuerte entre entidades"
 
   - id: secretos-hardcodeados
     severidad: rojo

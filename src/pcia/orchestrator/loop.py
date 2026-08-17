@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import datetime as dt
 import time
+import uuid
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Sequence
@@ -42,6 +44,28 @@ MAX_INTENTOS_DESTINO = 3
 MAX_CORRECCIONES_POR_ARCHIVO = 3
 # Cada ciclo de corrección profunda implica un rebuild (minutos): límite corto.
 MAX_CORRECCIONES_BUILD = 2
+# Cuántas veces se puede seguir ajustando la resolución de UN hallazgo antes
+# de pasar al siguiente (ver ``_resolver_hallazgos``): acota el mini-diálogo
+# de confirmación, mismo patrón que el resto de los loops del ciclo.
+MAX_AJUSTES_POR_HALLAZGO = 3
+
+
+@dataclass(frozen=True)
+class LimitesCiclo:
+    """Topes de los loops acotados del ciclo (ver docs/DISENO.md §4).
+
+    Configurables desde ``config.yaml`` (sección ``limites``): con un modelo
+    local lento, bajar estos números acorta una corrida que se estanca;
+    subirlos da más margen a un modelo débil antes de escalar al usuario.
+    Los defaults son los mismos valores que el sistema usó siempre.
+    """
+
+    max_turnos_entrevista: int = MAX_TURNOS_ENTREVISTA
+    max_ciclos_coherencia: int = MAX_CICLOS_COHERENCIA
+    max_intentos_destino: int = MAX_INTENTOS_DESTINO
+    max_correcciones_por_archivo: int = MAX_CORRECCIONES_POR_ARCHIVO
+    max_correcciones_build: int = MAX_CORRECCIONES_BUILD
+    max_ajustes_por_hallazgo: int = MAX_AJUSTES_POR_HALLAZGO
 
 # Respuestas (normalizadas) que confirman la spec al cierre de la entrevista.
 CONFIRMACIONES = ("", "s", "si", "ok", "dale", "listo")
@@ -98,6 +122,8 @@ class Orquestador:
         salida: Callable[[str], None],
         docs: Sequence[Path] | None = None,
         proveedor: str | None = None,
+        limites: LimitesCiclo | None = None,
+        spec_inicial: ProjectSpec | None = None,
     ) -> None:
         self._provider = provider
         self._memory_dir = Path(memory_dir)
@@ -105,8 +131,13 @@ class Orquestador:
         self._salida = salida
         self._docs = [Path(doc) for doc in (docs or [])]
         self._proveedor = proveedor
+        self._limites = limites or LimitesCiclo()
         self._inicio = time.monotonic()
-        self.spec = ProjectSpec()
+        # ``spec_inicial`` es cómo se retoma una corrida interrumpida (ver
+        # ``ruta_checkpoint``) o cómo el usuario corrige algo ya respondido
+        # sin reempezar de cero: arranca la entrevista con esos campos ya
+        # completos, y el Entrevistador solo pregunta por lo que falte.
+        self.spec = spec_inicial or ProjectSpec()
         self.ruta_spec: Path | None = None
         self.ruta_proyecto: Path | None = None
         self.resoluciones: list[ResolucionHallazgo] = []
@@ -125,6 +156,31 @@ class Orquestador:
         self._entrevistador = Entrevistador(
             provider, self.spec, historial_previo=self._aprendizaje.resumen_historial()
         )
+        # Checkpoint de progreso: se reescribe con la spec actual mientras la
+        # corrida no terminó, y se borra al completarse con éxito. Si la
+        # corrida se interrumpe (falla o Ctrl+C), queda el último estado
+        # conocido para retomar con ``spec_inicial`` en vez de reempezar
+        # de cero (ver docs/UX.md U3/U4/U5).
+        self._ruta_checkpoint = (
+            self._memory_dir / "en-progreso" / f"checkpoint-{uuid.uuid4().hex[:12]}.json"
+        )
+
+    @property
+    def ruta_checkpoint(self) -> Path | None:
+        """Dónde quedó el progreso guardado, si la corrida no llegó a completarse."""
+        return self._ruta_checkpoint if self._ruta_checkpoint.exists() else None
+
+    def _guardar_checkpoint(self) -> None:
+        try:
+            self._ruta_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+            self._ruta_checkpoint.write_text(
+                self.spec.model_dump_json(indent=2), encoding="utf-8"
+            )
+        except OSError:
+            pass  # best-effort: no debe tumbar el manejo de la falla real
+
+    def _borrar_checkpoint(self) -> None:
+        self._ruta_checkpoint.unlink(missing_ok=True)
 
     def ejecutar(self) -> Path:
         """Corre la máquina de estados y devuelve la ruta de la spec guardada."""
@@ -139,9 +195,28 @@ class Orquestador:
         }
         self._inicio = time.monotonic()
         fase = Fase.ANALISIS
-        while fase is not Fase.FIN:
-            self.fase_actual = fase
-            fase = manejadores[fase]()
+        completado = False
+        try:
+            while fase is not Fase.FIN:
+                self.fase_actual = fase
+                fase = manejadores[fase]()
+                self._guardar_checkpoint()
+            completado = True
+        finally:
+            # ``finally`` cubre tanto una excepción esperada (contrato
+            # agotado, verificación fallida, etc.) como una interrupción
+            # (Ctrl+C en la CLI). El checkpoint del ``while`` de arriba solo
+            # se actualiza al CERRAR una fase completa; si la excepción
+            # ocurrió a mitad de una fase (el caso más común: un turno de
+            # entrevista que agota sus reintentos), ese último checkpoint
+            # quedó desactualizado. ``self.spec`` se muta in-place en cada
+            # turno exitoso, así que volver a guardarlo acá — con lo último
+            # que sí se aplicó, aunque el turno que falló no — es lo que
+            # evita perder ese progreso.
+            if completado:
+                self._borrar_checkpoint()
+            else:
+                self._guardar_checkpoint()
         self.fase_actual = Fase.FIN
         assert self.ruta_spec is not None
         return self.ruta_spec
@@ -179,7 +254,7 @@ class Orquestador:
         entrevistador = self._entrevistador
         respuesta = entrevistador.iniciar()
 
-        for _ in range(MAX_TURNOS_ENTREVISTA):
+        for _ in range(self._limites.max_turnos_entrevista):
             self._salida(respuesta.message_to_user)
             if respuesta.done and self.spec.esta_completa():
                 # Confirmación explícita: el usuario valida la spec antes de
@@ -207,8 +282,8 @@ class Orquestador:
             respuesta = entrevistador.responder(entrada)
 
         raise LimiteDeTurnosError(
-            f"La entrevista superó los {MAX_TURNOS_ENTREVISTA} turnos sin "
-            "completar la especificación."
+            f"La entrevista superó los {self._limites.max_turnos_entrevista} "
+            "turnos sin completar la especificación."
         )
 
     def _fase_auditoria(self) -> Fase:
@@ -225,9 +300,15 @@ class Orquestador:
         No se construye sobre una spec con conflictos no resueltos.
         """
         auditor = Auditor(self._provider)
+        max_ciclos = self._limites.max_ciclos_coherencia
         pendientes: list[Hallazgo] = []
         detectados: dict[str, Hallazgo] = {}
-        for ciclo in range(MAX_CICLOS_COHERENCIA):
+        # ``max_ciclos`` rondas de resolución + 1 auditoría final de
+        # confirmación: el usuario tiene que poder responder a los hallazgos
+        # de la última ronda también, no solo a los de las rondas previas
+        # (bug real: la última auditoría se reportaba y el ciclo abortaba sin
+        # darle turno al usuario para resolverla).
+        for ciclo in range(max_ciclos + 1):
             resultado = auditor.auditar(self.spec)
             self.auditoria = resultado
             self._salida(_formatear_reporte(resultado))
@@ -236,14 +317,13 @@ class Orquestador:
             if not pendientes:
                 self.resoluciones = self._clasificar_resoluciones(detectados)
                 return Fase.CONSTRUCCION
-            if ciclo == MAX_CICLOS_COHERENCIA - 1:
+            if ciclo == max_ciclos:
                 break
             self._resolver_hallazgos(pendientes)
 
         raise CoherenciaNoResueltaError(
-            "Quedaron hallazgos sin resolver tras "
-            f"{MAX_CICLOS_COHERENCIA} ciclos de coherencia: "
-            + ", ".join(h.id for h in pendientes)
+            f"Quedaron hallazgos sin resolver tras {max_ciclos} ciclos de "
+            "coherencia: " + ", ".join(h.id for h in pendientes)
         )
 
     def _clasificar_resoluciones(
@@ -266,6 +346,17 @@ class Orquestador:
         ]
 
     def _resolver_hallazgos(self, pendientes: list[Hallazgo]) -> None:
+        """Ante cada hallazgo, pide la decisión del usuario y la aplica.
+
+        Bug real detectado en uso: el Entrevistador suele cerrar su
+        confirmación con una pregunta propia ("¿te parece bien esta
+        configuración o preferís otro proveedor?"), y con varios hallazgos
+        pendientes el loop pasaba directo al siguiente sin darle al usuario
+        turno para responderla — la pregunta quedaba huérfana y la respuesta
+        del usuario terminaba interpretada como la decisión del hallazgo
+        siguiente. Ahora cada hallazgo cierra con una confirmación explícita
+        (mismo patrón que la confirmación de la spec) antes de seguir.
+        """
         for hallazgo in pendientes:
             if hallazgo.severidad is Severidad.ROJO:
                 detalle = self._entrada(
@@ -300,13 +391,32 @@ class Orquestador:
                 "Actualizá la especificación en consecuencia."
             )
             self._salida(respuesta.message_to_user)
+            self._confirmar_resolucion(hallazgo)
+
+    def _confirmar_resolucion(self, hallazgo: Hallazgo) -> None:
+        """Le da al usuario un turno real para reaccionar a la respuesta del
+        Entrevistador antes de pasar al siguiente hallazgo (o a auditar de
+        nuevo). Acotado: si el usuario sigue pidiendo ajustes sin confirmar,
+        se sigue de todos modos tras el límite, como el resto de los loops."""
+        for _ in range(self._limites.max_ajustes_por_hallazgo):
+            ajuste = self._entrada(
+                "(enter para seguir con el siguiente hallazgo, o escribí un "
+                "ajuste a esta corrección) "
+            ).strip()
+            if normalizar(ajuste) in CONFIRMACIONES:
+                return
+            respuesta = self._entrevistador.responder(
+                f"El usuario pide un ajuste sobre cómo se resolvió el hallazgo "
+                f"'{hallazgo.id}': {ajuste}. Aplicalo y confirmá brevemente."
+            )
+            self._salida(respuesta.message_to_user)
 
     def _fase_construccion(self) -> Fase:
         """Genera el scaffold en un directorio destino elegido por el usuario."""
         constructor = Constructor(self._provider)
         sugerido = Path.cwd() / slug_kebab(self.spec.nombre or "proyecto")
 
-        for _ in range(MAX_INTENTOS_DESTINO):
+        for _ in range(self._limites.max_intentos_destino):
             crudo = self._entrada(f"¿Dónde genero el proyecto? (enter = {sugerido}) ")
             destino = Path(crudo.strip() or sugerido).expanduser().resolve()
             try:
@@ -324,7 +434,8 @@ class Orquestador:
             return Fase.VERIFICACION
 
         raise DestinoInvalidoError(
-            f"No se encontró un destino válido tras {MAX_INTENTOS_DESTINO} intentos."
+            "No se encontró un destino válido tras "
+            f"{self._limites.max_intentos_destino} intentos."
         )
 
     def _fase_verificacion(self) -> Fase:
@@ -343,12 +454,13 @@ class Orquestador:
 
         resultado = verificador.verificar(raiz)
         self._salida(_formatear_verificacion(resultado))
+        max_correcciones = self._limites.max_correcciones_por_archivo
         if resultado.errores():
             for chequeo in resultado.errores():
-                for intento in range(1, MAX_CORRECCIONES_POR_ARCHIVO + 1):
+                for intento in range(1, max_correcciones + 1):
                     self._salida(
                         f"Corrigiendo {chequeo.archivo} "
-                        f"(intento {intento}/{MAX_CORRECCIONES_POR_ARCHIVO})…"
+                        f"(intento {intento}/{max_correcciones})…"
                     )
                     verificador.corregir_archivo(raiz, chequeo.archivo, chequeo.detalle)
                     chequeo = verificador.verificar_archivo(raiz, chequeo.archivo)
@@ -406,13 +518,14 @@ class Orquestador:
         se corta el ciclo y decide el usuario, como antes de la Fase 7.
         """
         assert self._construccion is not None
-        for intento in range(1, MAX_CORRECCIONES_BUILD + 1):
+        max_correcciones = self._limites.max_correcciones_build
+        for intento in range(1, max_correcciones + 1):
             errores = [c for c in profundos if c.estado == "error"]
             if not errores:
                 return profundos
             self._salida(
                 "Corrigiendo fallas de la verificación profunda "
-                f"(intento {intento}/{MAX_CORRECCIONES_BUILD})…"
+                f"(intento {intento}/{max_correcciones})…"
             )
             try:
                 correccion = verificador.corregir_build(
