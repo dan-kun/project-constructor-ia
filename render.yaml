@@ -6,7 +6,7 @@ services:
     branch: main
     buildCommand: pip install -e ".[web]"
     startCommand: uvicorn pcia.web.app:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
