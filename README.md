@@ -39,7 +39,7 @@ Trabajo final del diplomado *Inteligencia Artificial Aplicada a Organizaciones* 
 
 ```bash
 pip install -e ".[dev]"     # instalar en modo desarrollo
-pytest                      # 169 tests, sin red ni Docker
+pytest                      # 277 tests, sin red ni Docker
 ```
 
 Configurar el proveedor de IA en `config.yaml` (ver más abajo).
