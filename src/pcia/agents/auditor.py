@@ -32,6 +32,11 @@ class Condicion(BaseModel):
 
     campos: list[str] = Field(min_length=1)
     contiene: list[str] = Field(min_length=1)
+    # Excepción a "contiene": si alguno de estos aparece en los mismos
+    # campos, la condición NO matchea aunque "contiene" sí lo haga. Reduce
+    # falsos positivos por negación (ej.: alcance="no es un prototipo, es
+    # un producto a escala" no debería disparar una regla sobre "prototipo").
+    no_contiene: list[str] = Field(default_factory=list)
 
 
 class Regla(BaseModel):
@@ -140,29 +145,63 @@ class Auditor:
         )
         ids_ocupados = asumidos | {h.id for h in hallazgos_reglas}
         return [
-            Hallazgo(
+            _normalizar_hallazgo_llm(
+                Hallazgo(
                 id=h.id,
                 severidad=h.severidad,
                 mensaje=h.mensaje,
                 correccion_propuesta=h.correccion_propuesta,
                 origen="llm",
+                )
             )
             for h in respuesta.hallazgos
-            if h.id not in ids_ocupados
+            if h.id not in ids_ocupados and _hallazgo_llm_corresponde(h, spec)
         ]
 
 
+def _hallazgo_llm_corresponde(hallazgo: HallazgoLLM, spec: ProjectSpec) -> bool:
+    """No repite controles ya configurados en la fuente de verdad."""
+    campos_por_id = {
+        "password-hashing-ausente": "hashing_contrasenas",
+        "cors-no-configurado": "cors",
+    }
+    campo = campos_por_id.get(hallazgo.id)
+    if not campo:
+        return True
+    valor = getattr(spec, campo)
+    return not valor or normalizar(valor) in {"ninguno", "ninguna", "ausente", "sin configurar"}
+
+
+def _normalizar_hallazgo_llm(hallazgo: Hallazgo) -> Hallazgo:
+    """El LLM aporta observaciones; solo las reglas verificables bloquean.
+
+    Un modelo puede confundir un checklist de producción (RBAC, escaneo de
+    dependencias, retención, e2e...) con una incoherencia del scaffold. Esas
+    recomendaciones se conservan para el ADR, pero no pueden iniciar un loop
+    interactivo sin condición determinística que confirme el problema.
+    """
+    if hallazgo.severidad is Severidad.VERDE:
+        return hallazgo
+    return hallazgo.model_copy(update={"severidad": Severidad.VERDE})
+
+
 def _condicion_matchea(condicion: Condicion, spec: ProjectSpec) -> bool:
+    textos = []
     for campo in condicion.campos:
         valor = getattr(spec, campo)
         if isinstance(valor, list):
             valor = " ".join(valor)
-        if not valor:
-            continue
-        texto = normalizar(valor)
-        if any(normalizar(palabra) in texto for palabra in condicion.contiene):
-            return True
-    return False
+        if valor:
+            textos.append(normalizar(valor))
+    if not textos:
+        return False
+    if condicion.no_contiene and any(
+        normalizar(palabra) in texto for texto in textos for palabra in condicion.no_contiene
+    ):
+        return False
+    return any(
+        normalizar(palabra) in texto for texto in textos for palabra in condicion.contiene
+    )
 
 
 def _ids_asumidos(spec: ProjectSpec) -> set[str]:

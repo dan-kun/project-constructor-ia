@@ -7,7 +7,10 @@ límite se escala al usuario con ``ContratoInvalidoError``.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
+import os
+from pathlib import Path
 from typing import Callable, Sequence, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -18,9 +21,50 @@ MAX_REINTENTOS = 3
 
 TContrato = TypeVar("TContrato", bound=BaseModel)
 
+# Diagnóstico opt-in: con modelos locales chicos, entender POR QUÉ un
+# contrato falla repetidamente requiere ver los intercambios crudos, que
+# ``ContratoInvalidoError`` no conserva (solo guarda el último error). Nunca
+# activo por defecto: system_prompt/mensajes pueden llevar contenido del
+# cliente (documentos, notas) que no debe quedar en disco sin que alguien
+# lo pida explícitamente.
+VAR_DEBUG = "PCIA_DEBUG_LLM"
+VAR_DEBUG_ARCHIVO = "PCIA_DEBUG_LLM_ARCHIVO"
+ARCHIVO_DEBUG_DEFAULT = "pcia-debug-llm.jsonl"
+
 
 class ContratoInvalidoError(Exception):
     """El LLM no cumplió el contrato JSON tras agotar los reintentos."""
+
+
+def _debug_habilitado() -> bool:
+    return os.environ.get(VAR_DEBUG, "").strip().lower() in ("1", "true", "si")
+
+
+def _registrar_intercambio(
+    system_prompt: str,
+    mensajes: Sequence[ChatMessage],
+    crudo: str,
+    intento: int,
+    error: str | None,
+) -> None:
+    if not _debug_habilitado():
+        return
+    ruta = Path(os.environ.get(VAR_DEBUG_ARCHIVO, "") or ARCHIVO_DEBUG_DEFAULT)
+    entrada = {
+        "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
+        "intento": intento,
+        "system_prompt": system_prompt,
+        "mensajes": [m.model_dump() for m in mensajes],
+        "respuesta_cruda": crudo,
+        "error": error,
+    }
+    # Best-effort: un fallo al escribir el log de diagnóstico no debe tumbar
+    # la consulta real al LLM.
+    try:
+        with ruta.open("a", encoding="utf-8") as archivo:
+            archivo.write(json.dumps(entrada, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
 
 
 def consultar_con_contrato(
@@ -36,11 +80,15 @@ def consultar_con_contrato(
     aplicar updates a la spec): si levanta ``ValueError`` también se
     reintenta con ese error como feedback. Devuelve la respuesta validada
     y el texto crudo del intento exitoso.
+
+    Con ``PCIA_DEBUG_LLM=1`` en el entorno, cada intento (éxito o fallo) se
+    apila en ``PCIA_DEBUG_LLM_ARCHIVO`` (default ``pcia-debug-llm.jsonl``)
+    para diagnosticar por qué un modelo falla el contrato repetidamente.
     """
     mensajes = list(mensajes)
     ultimo_error = ""
 
-    for _ in range(MAX_REINTENTOS):
+    for intento in range(1, MAX_REINTENTOS + 1):
         crudo = provider.generate(system_prompt, mensajes)
         try:
             respuesta = _validar(crudo, contrato)
@@ -48,6 +96,7 @@ def consultar_con_contrato(
                 postproceso(respuesta)
         except ValueError as exc:
             ultimo_error = str(exc)
+            _registrar_intercambio(system_prompt, mensajes, crudo, intento, ultimo_error)
             # Reintento con el error como feedback, sin ensuciar el historial real.
             mensajes = [
                 *mensajes,
@@ -62,6 +111,7 @@ def consultar_con_contrato(
                 ),
             ]
             continue
+        _registrar_intercambio(system_prompt, mensajes, crudo, intento, None)
         return respuesta, crudo
 
     raise ContratoInvalidoError(

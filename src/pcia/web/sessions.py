@@ -14,20 +14,30 @@ from __future__ import annotations
 
 import queue
 import re
+import shutil
 import tempfile
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
+from pcia.agents.analista import EXTENSIONES_SOPORTADAS
 from pcia.config import ConfigError, crear_provider
+from pcia.domain.models import ProjectSpec
 from pcia.domain.ports import LLMProviderError
 from pcia.orchestrator.loop import Orquestador
 from pcia.transcript import Transcript
 
 TTL_SESION_SEGUNDOS = 3600  # limpieza de sesiones abandonadas
+
+# Documentos del cliente subidos desde el navegador (ver docs/UX.md U9): el
+# Analista ya trunca a MAX_CARACTERES_POR_DOC para el prompt, pero esto
+# limita lo que se acepta y se escribe a disco en la demo web, antes de que
+# el análisis siquiera arranque.
+MAX_DOCUMENTOS_WEB = 5
+MAX_CARACTERES_POR_DOCUMENTO_WEB = 100_000
 
 # Coincide con el texto exacto de loop.py::_fase_construccion. El Constructor
 # solo valida que el destino esté vacío, no dónde vive (correcto para el
@@ -37,6 +47,60 @@ TTL_SESION_SEGUNDOS = 3600  # limpieza de sesiones abandonadas
 # propio de la sesión, sin importar lo que haya tipeado.
 _MARCA_PROMPT_DESTINO = "¿Dónde genero el proyecto?"
 _CARACTERES_NO_SEGUROS = re.compile(r"[^a-zA-Z0-9_-]+")
+
+# Decisiones de opción fija del orquestador (ver docs/UX.md U6): coinciden
+# con fragmentos exactos de los prompts de loop.py. Se traducen a botones
+# para que el visitante no tenga que tipear 's'/'N'/'abortar' — el campo de
+# texto libre sigue disponible siempre, para cualquier respuesta que no
+# encaje en las opciones ofrecidas. El orden importa: algunas marcas son
+# substring de otras (ver "¿Cómo lo querés resolver?"), así que se evalúan
+# de la más específica a la más genérica.
+_MARCA_CONFIRMAR_SPEC = "¿Confirmás la especificación?"
+_MARCA_HALLAZGO_ROJO = "no puede asumirse"
+_MARCA_HALLAZGO_AMARILLO = "s = asumir / N = corregir"
+_MARCA_COMO_RESOLVER = "¿Cómo lo querés resolver?"
+_MARCA_ENTREGAR_IGUAL = "¿Entrego el proyecto igual?"
+_MARCA_DOCKERFILE_REESCRITO = "Dockerfile corregido"
+
+_OPCIONES_POR_MARCA: list[tuple[str, list[dict[str, str]]]] = [
+    (_MARCA_CONFIRMAR_SPEC, [{"texto": "Confirmar especificación", "valor": ""}]),
+    (
+        _MARCA_HALLAZGO_ROJO,
+        [
+            {"texto": "Aplicar corrección propuesta", "valor": ""},
+            {"texto": "Abortar el proyecto", "valor": "abortar"},
+        ],
+    ),
+    (
+        _MARCA_HALLAZGO_AMARILLO,
+        [
+            {"texto": "Asumir el riesgo", "valor": "s"},
+            {"texto": "Corregir", "valor": "n"},
+        ],
+    ),
+    (_MARCA_COMO_RESOLVER, [{"texto": "Aplicar corrección propuesta", "valor": ""}]),
+    (
+        _MARCA_ENTREGAR_IGUAL,
+        [
+            {"texto": "Entregar igual", "valor": "s"},
+            {"texto": "Cancelar", "valor": "n"},
+        ],
+    ),
+    (
+        _MARCA_DOCKERFILE_REESCRITO,
+        [
+            {"texto": "Ejecutar el build", "valor": "s"},
+            {"texto": "Cancelar", "valor": "n"},
+        ],
+    ),
+]
+
+
+def _opciones_para_prompt(prompt: str) -> list[dict[str, str]] | None:
+    for marca, opciones in _OPCIONES_POR_MARCA:
+        if marca in prompt:
+            return opciones
+    return None
 
 
 class SesionInvalidaError(Exception):
@@ -50,6 +114,20 @@ class Evento:
     # Foto del estado observable del Orquestador en el momento del evento:
     # deja que el navegador muestre el avance del ciclo sin parsear el texto.
     estado: dict[str, Any] | None = None
+    # Decisión de opción fija reconocida en el prompt (ver
+    # ``_opciones_para_prompt``): el navegador la renderiza como botones,
+    # sin dejar de aceptar texto libre en el mismo turno.
+    opciones: list[dict[str, str]] | None = None
+    # True SOLO cuando el Orquestador está a punto de bloquearse esperando
+    # una respuesta (``Sesion.entrada`` a punto de leer de la cola). La
+    # mayoría de los ``salida()`` del ciclo son informativos — el
+    # Orquestador sigue trabajando después (auditando, construyendo,
+    # verificando) sin esperar nada — y antes de esta distinción el
+    # navegador habilitaba el campo de texto y decía "Tu turno" después de
+    # CUALQUIER mensaje, aunque el ciclo siguiera corriendo solo en el
+    # fondo: no había forma de distinguir "esperando tu respuesta" de
+    # "trabajando, esto va a tardar".
+    espera_respuesta: bool = False
 
 
 @dataclass
@@ -79,10 +157,20 @@ class Sesion:
             self.salida(
                 "¿Cómo querés nombrar la carpeta del proyecto? (opcional — se "
                 "genera en un directorio propio de tu sesión en el servidor, "
-                "no en tu computadora; lo descargás como .zip al final)"
+                "no en tu computadora; lo descargás como .zip al final)",
+                espera_respuesta=True,
             )
         elif prompt.strip() and prompt.strip() != ">":
-            self.salida(prompt.strip())
+            self.salida(
+                prompt.strip(), opciones=_opciones_para_prompt(prompt), espera_respuesta=True
+            )
+        else:
+            # Turno normal de entrevista: la pregunta real ya viajó por un
+            # ``salida()`` propio (sin este flag) un instante antes, así que
+            # acá no hay texto nuevo que mostrar — solo señalizar que el
+            # ciclo se detuvo a esperar, para que el navegador recién ahora
+            # habilite el campo y diga "tu turno".
+            self.salida("", espera_respuesta=True)
         texto = self._entrada_q.get()
         self.transcript.registrar_entrada(texto)
         if _MARCA_PROMPT_DESTINO in prompt:
@@ -105,9 +193,26 @@ class Sesion:
         nombre = _CARACTERES_NO_SEGUROS.sub("-", crudo).strip("-") or "proyecto"
         return str(base / nombre)
 
-    def salida(self, texto: str) -> None:
-        self.transcript.registrar_salida(texto)
-        self._salida_q.put(Evento(tipo="mensaje", texto=texto, estado=self.estado()))
+    def salida(
+        self,
+        texto: str,
+        opciones: list[dict[str, str]] | None = None,
+        espera_respuesta: bool = False,
+    ) -> None:
+        if texto:
+            # Los eventos "marcador" (turno normal de entrevista, ver
+            # ``entrada``) viajan con texto vacío: no son contenido nuevo
+            # para el transcript, solo una señal para el navegador.
+            self.transcript.registrar_salida(texto)
+        self._salida_q.put(
+            Evento(
+                tipo="mensaje",
+                texto=texto,
+                estado=self.estado(),
+                opciones=opciones,
+                espera_respuesta=espera_respuesta,
+            )
+        )
 
     def estado(self) -> dict[str, Any] | None:
         """Estado observable del Orquestador (fase, spec, auditoría, etc.).
@@ -196,8 +301,15 @@ class GestorSesiones:
         self._sesiones: dict[str, Sesion] = {}
         self._lock = threading.Lock()
 
-    def crear(self, config_proveedor: dict[str, Any]) -> Sesion:
+    def crear(
+        self,
+        config_proveedor: dict[str, Any],
+        documentos: Sequence[tuple[str, str]] | None = None,
+        spec_inicial: dict[str, Any] | None = None,
+    ) -> Sesion:
         provider = crear_provider(config_proveedor)  # valida antes de abrir hilo
+        validar_documentos(documentos or [])  # ídem: falla antes de abrir hilo
+        spec = _spec_desde_inicial(spec_inicial or {})  # ídem
         nombre = config_proveedor.get("provider", "")
         modelo = (config_proveedor.get(nombre) or {}).get("model")
 
@@ -207,12 +319,15 @@ class GestorSesiones:
             if self.memoria_por_sesion
             else self._memory_dir
         )
+        rutas_docs = _guardar_documentos(sesion.directorio_base, documentos or [])
         orquestador = Orquestador(
             provider,
             memory_dir=memory_dir,
             entrada=sesion.entrada,
             salida=sesion.salida,
+            docs=rutas_docs,
             proveedor=f"{nombre}:{modelo}" if modelo else nombre or None,
+            spec_inicial=spec,
         )
         sesion.orquestador = orquestador
 
@@ -249,6 +364,14 @@ class GestorSesiones:
         return sesion
 
     def _limpiar_expiradas(self) -> None:
+        """Descarta las sesiones vencidas y su directorio en ``/tmp``.
+
+        Sin esto, cada sesión (proyecto generado, transcript, memoria propia
+        si ``memoria_por_sesion``) queda huérfana en el filesystem del
+        servidor para siempre, aunque ya nadie pueda acceder a ella por su
+        id. Falla silenciosa: un directorio que no se pudo borrar (en uso,
+        permisos) no debe tumbar la creación de sesiones nuevas.
+        """
         ahora = time.monotonic()
         vencidas = [
             sid
@@ -256,7 +379,74 @@ class GestorSesiones:
             if ahora - s.ultimo_acceso > TTL_SESION_SEGUNDOS
         ]
         for sid in vencidas:
-            del self._sesiones[sid]
+            sesion = self._sesiones.pop(sid)
+            shutil.rmtree(sesion.directorio_base, ignore_errors=True)
+
+
+def validar_documentos(documentos: Sequence[tuple[str, str]]) -> None:
+    """Documentos del cliente subidos desde el navegador (ver docs/UX.md U9).
+
+    Falla temprano (antes de crear la sesión) ante formato no soportado,
+    contenido vacío o de más: mismo principio que ``validar_config_proveedor``
+    — no confiar en el cliente más de lo necesario.
+    """
+    if len(documentos) > MAX_DOCUMENTOS_WEB:
+        raise ConfigError(f"Máximo {MAX_DOCUMENTOS_WEB} documentos por sesión.")
+    for nombre, contenido in documentos:
+        sufijo = Path(nombre).suffix.lower()
+        if sufijo not in EXTENSIONES_SOPORTADAS:
+            raise ConfigError(
+                f"Formato no soportado: {nombre!r} (se aceptan: "
+                f"{', '.join(EXTENSIONES_SOPORTADAS)})."
+            )
+        if not contenido.strip():
+            raise ConfigError(f"El documento {nombre!r} está vacío.")
+        if len(contenido) > MAX_CARACTERES_POR_DOCUMENTO_WEB:
+            raise ConfigError(
+                f"El documento {nombre!r} supera el máximo de "
+                f"{MAX_CARACTERES_POR_DOCUMENTO_WEB} caracteres admitido en la demo web."
+            )
+
+
+def _guardar_documentos(
+    directorio_base: Path, documentos: Sequence[tuple[str, str]]
+) -> list[Path]:
+    """Escribe los documentos en el directorio propio de la sesión.
+
+    ``Path(nombre).name`` descarta cualquier componente de ruta que haya
+    viajado en el nombre del archivo (mismo criterio que el resto de la
+    superficie web: nunca confiar en una ruta que eligió el visitante).
+    """
+    if not documentos:
+        return []
+    carpeta = directorio_base / "docs"
+    carpeta.mkdir(parents=True, exist_ok=True)
+    rutas = []
+    for nombre, contenido in documentos:
+        ruta = carpeta / Path(nombre).name
+        ruta.write_text(contenido, encoding="utf-8")
+        rutas.append(ruta)
+    return rutas
+
+
+def _spec_desde_inicial(datos: dict[str, Any]) -> ProjectSpec:
+    """Arma la spec de arranque de la sesión (ver docs/UX.md U3/U4/U5).
+
+    Le da al usuario una forma de corregir algo ya respondido, o de
+    retomar tras un error, sin reempezar la entrevista de cero: el
+    navegador reenvía la última spec conocida (ya visible en el propio
+    panel de estado) como punto de partida de una sesión nueva. Reutiliza
+    ``aplicar_updates`` — la misma validación de claves/valores que usa el
+    Entrevistador en cada turno — así que un payload inventado no puede
+    escribir en campos inexistentes ni con tipos inválidos.
+    """
+    spec = ProjectSpec()
+    if datos:
+        try:
+            spec.aplicar_updates(datos)
+        except ValueError as exc:
+            raise ConfigError(f"Datos de partida inválidos: {exc}") from exc
+    return spec
 
 
 def validar_config_proveedor(datos: dict[str, Any]) -> dict[str, Any]:

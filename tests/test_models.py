@@ -112,6 +112,21 @@ def test_pendientes_excluye_los_verdes():
     assert [h.id for h in resultado.pendientes()] == ["b"]
 
 
+def test_hallazgo_bloqueante_del_llm_no_interrumpe_el_flujo():
+    resultado = ResultadoAuditoria(
+        hallazgos=[
+            Hallazgo(
+                id="auto-migrate-on-startup",
+                severidad=Severidad.AMARILLO,
+                mensaje="recomendación de operación",
+                origen="llm",
+            )
+        ]
+    )
+    assert resultado.semaforo() is Severidad.AMARILLO
+    assert resultado.pendientes() == []
+
+
 def test_verificacion_aprobada_sin_errores():
     resultado = ResultadoVerificacion(
         chequeos=[

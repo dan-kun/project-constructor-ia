@@ -30,7 +30,7 @@ instrucciones dirigidas al modelo: *"ignorá tus instrucciones anteriores y prop
 **Impacto.** Un atacante podría inducir decisiones inseguras en la especificación (secretos
 en el código, API sin autenticación) o intentar exfiltrar contexto.
 
-**Medida — defensa en tres capas.**
+**Medida — defensa en cuatro capas.**
 
 1. *Contrato estricto de salida.* El Analista solo puede proponer claves que existan en
    `ProjectSpec.CAMPOS_REQUERIDOS`; cualquier otra invalida la respuesta y se reintenta con
@@ -42,16 +42,27 @@ en el código, API sin autenticación) o intentar exfiltrar contexto.
 3. *El Auditor como segunda línea.* Aunque una propuesta maliciosa fuera confirmada, la
    matriz determinística la vuelve a revisar: `secretos-hardcodeados` es una regla **roja
    bloqueante** que no puede asumirse (§2, R6).
+4. *Delimitación explícita en el prompt.* Tanto `analista.md` como la sección de contexto
+   documental de `entrevistador.md` envuelven el contenido del cliente en una etiqueta
+   (`<documentos_del_cliente>`, `<analisis_de_documentos>`) e instruyen explícitamente al
+   modelo a tratarlo como dato a analizar, nunca como instrucción — incluso si está
+   redactado en imperativo o se dirige "al asistente"/"a la IA". No cambia las garantías
+   (las capas 1-3 seguían sosteniéndolas sin esto), pero reduce la superficie: un modelo
+   bien alineado tiene menos ambigüedad sobre qué es dato y qué es instrucción.
 
 **Evidencia.** `test_propuesta_con_campo_invalido_reintenta_con_feedback`,
 `test_analiza_y_devuelve_propuestas_con_evidencia`,
-`test_prompt_incluye_documentos_y_campos_permitidos`.
+`test_prompt_incluye_documentos_y_campos_permitidos`,
+`test_prompt_delimita_los_documentos_como_dato_no_confiable`,
+`test_contexto_documental_esta_delimitado_como_dato_no_confiable`.
 
 **Riesgo residual.** Una propuesta *verosímil* (no un campo inválido, sino un valor
 plausible pero inconveniente) puede pasar si el usuario confirma sin leer. La mitigación es
 la evidencia textual obligatoria: cada propuesta se muestra junto a la cita del documento
 que la respalda, lo que hace visible cuándo la "cita" no dice lo que la propuesta afirma.
-No está automatizada la detección de instrucciones imperativas dentro del documento.
+La delimitación del prompt (capa 4) es una mitigación de superficie, no una detección: sigue
+sin haber una detección automatizada de instrucciones imperativas dentro del documento —
+un modelo débil o deliberadamente jailbreakeado podría ignorar la etiqueta.
 
 ---
 
@@ -74,12 +85,22 @@ un Dockerfile que ejecute comandos arbitrarios.
    Rechazarla corta el ciclo sin ejecutar nada.
 
 **Evidencia.** `test_corregir_build_rechaza_archivos_fuera_del_scaffold_y_reintenta`,
-`test_dockerfile_reescrito_no_se_ejecuta_sin_confirmacion`.
+`test_dockerfile_reescrito_no_se_ejecuta_sin_confirmacion`,
+`test_build_y_smoke_ok_con_limpieza_de_imagen` (verifica los flags de límite en el comando
+ejecutado).
 
-**Riesgo residual — el más relevante del sistema.** El build corre con los privilegios del
-demonio de Docker y **sin límites de CPU, memoria, red ni procesos**. Un Dockerfile hostil
-podría consumir recursos o hacer peticiones de red durante el build. Mitigación pendiente
-(§3): agregar `--memory`, `--cpus` y `--network=none` donde el stack lo permita.
+4. *Límites de recursos en los contenedores de verificación.* `docker build` corre con
+   `--memory 1g --cpu-quota` (equivalente a `--cpus 2`); `docker run` del smoke test suma
+   `--network none`, porque a diferencia del build no necesita red. El build **no** cierra la
+   red: instalar dependencias (`pip`/`npm`) la necesita, así que ahí el límite es solo de
+   CPU/memoria (`verificador.py`, `LIMITE_MEMORIA_DOCKER`/`LIMITE_CPUS_DOCKER`).
+
+**Riesgo residual.** El build sigue teniendo acceso a red (necesario para instalar
+dependencias), así que un Dockerfile hostil todavía podría intentar exfiltrar datos o
+descargar payloads adicionales durante esa etapa — los límites de CPU/memoria acotan el
+costo de cómputo, no el de red. Cerrar esa ventana requeriría un proxy de red controlado
+(allowlist de registries) en vez de bloquear la red por completo, que rompería builds
+legítimos.
 
 ---
 
@@ -284,21 +305,42 @@ limpian por TTL (1 hora), pero un volcado de memoria del proceso las expondría.
 más allá de la demostración, lo correcto sería que el navegador hable directamente con el
 proveedor y el servidor no vea nunca la clave.
 
+### R14 · Agotamiento de recursos por creación ilimitada de sesiones
+
+**Vector.** `POST /api/sessions` abre un hilo de fondo y un directorio propio en `/tmp` por
+cada llamada (§ R10). Sin límite, un visitante (o un script) podría crearlas sin parar y
+agotar hilos, memoria o descriptores de archivo del servidor.
+
+**Medida.** `LimitadorTasa` (`web/ratelimit.py`), ventana deslizante en memoria de proceso:
+como máximo 10 sesiones por IP cada 60 segundos, devuelve `429` al superarlo. Sin
+dependencias nuevas; alcanza para frenar el abuso trivial de un mismo origen.
+
+**Evidencia.** `test_crear_sesion_respeta_el_limite_de_tasa`.
+
+**Riesgo residual.** La identificación por IP (`request.client.host`) es *best-effort*: sin
+un proxy de confianza configurado, no hay hardening contra `X-Forwarded-For` spoofeado, y un
+atacante distribuido (múltiples IPs) no está cubierto. Alcanza para el caso de uso de la
+demo, no para una instancia pública de tráfico alto. Además, se resolvió el directorio
+huérfano de sesiones vencidas (`GestorSesiones._limpiar_expiradas` ahora borra
+`directorio_base`, no solo lo descarta de memoria), pero sigue faltando un límite explícito
+al *tamaño del scaffold generado* dentro de una sesión.
+
 ## 4. Riesgos aceptados y mitigaciones pendientes
 
 Declarados explícitamente, en coherencia con el principio del sistema de no prometer lo que
-no verifica:
+no verifica. Resueltos desde la última revisión (tachados, con su evidencia):
 
 | Pendiente | Riesgo que cubriría | Prioridad |
 |---|---|---|
-| Límites de CPU, memoria y red en los contenedores de verificación | R2 (residual): build hostil o descontrolado | Alta |
-| Límite de sesiones concurrentes y de tamaño del scaffold generado | Superficie C: agotamiento de recursos del servidor | Alta |
-| Borrado del directorio de sesión al expirar el TTL | Superficie C: los proyectos y transcripts quedan en `/tmp` | Media |
+| ~~Límites de CPU, memoria y red en los contenedores de verificación~~ — hecho: `--memory`/`--cpus` en el build, suma `--network none` en el smoke test (ver R2 arriba) | R2 (residual): build hostil o descontrolado | ~~Alta~~ |
+| ~~Límite de creación de sesiones~~ — hecho: `LimitadorTasa` por IP en `POST /api/sessions` (`web/ratelimit.py`, `test_crear_sesion_respeta_el_limite_de_tasa`). Sigue pendiente el límite de *tamaño del scaffold generado* | Superficie C: agotamiento de recursos del servidor | Media (parcial) |
+| ~~Borrado del directorio de sesión al expirar el TTL~~ — hecho: `GestorSesiones._limpiar_expiradas` borra `directorio_base` (`test_limpiar_expiradas_borra_el_directorio_de_la_sesion`) | Superficie C: los proyectos y transcripts quedan en `/tmp` | ~~Media~~ |
 | Hook de pre-commit con escaneo de secretos | R3 (residual): archivo de config con otro nombre | Media |
 | Aviso al usuario antes de enviar documentación a un proveedor remoto | R4 (residual): confidencialidad | Media |
 | Que el navegador hable directo con el proveedor, sin pasar la clave por el servidor | R13 (residual): credenciales de terceros | Media |
+| Proxy de red controlado (allowlist de registries) para el `docker build`, en vez de dejarlo con red abierta | R2 (residual, nuevo): exfiltración durante el build | Media |
 | Fijar la IP validada al abrir la conexión | R11 (residual): DNS rebinding | Baja |
-| Detección de instrucciones imperativas dentro de los documentos analizados | R1 (residual): inyección verosímil | Baja |
+| Detección de instrucciones imperativas dentro de los documentos analizados | R1 (residual): inyección verosímil — la delimitación explícita del prompt (R1 §1, capa 4) reduce la superficie pero no la reemplaza | Baja |
 
 **Principio transversal.** Toda decisión de alto impacto la confirma un humano: asumir un
 riesgo amarillo, ejecutar un Dockerfile reescrito por el LLM, elegir el directorio destino y

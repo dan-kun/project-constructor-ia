@@ -39,6 +39,71 @@ def cliente() -> TestClient:
     return TestClient(app)
 
 
+def test_crear_sesion_con_documento_invalido_devuelve_400(monkeypatch, tmp_path, cliente):
+    """Equivalente HTTP de U9: subir un documento con formato no soportado
+    se rechaza antes de crear la sesión, con el mismo tipo de error 400 que
+    usa el resto del formulario (ver validar_config_proveedor)."""
+    from pcia.web import app as modulo_app
+
+    monkeypatch.setattr(modulo_app.gestor, "_memory_dir", tmp_path)
+    payload = {
+        "provider": "openai_compat",
+        "base_url": "http://localhost:11434/v1",
+        "model": "qwen2.5",
+        "documentos": [{"nombre": "requerimientos.pdf", "contenido": "x"}],
+    }
+    resp = cliente.post("/api/sessions", json=payload)
+    assert resp.status_code == 400
+    assert "Formato no soportado" in resp.json()["detail"]
+
+
+def test_crear_sesion_con_spec_inicial_invalida_devuelve_400(monkeypatch, tmp_path, cliente):
+    """Corregir/retomar con datos ya respondidos (U3/U4/U5): un payload con
+    una clave inexistente se rechaza igual que el resto del formulario."""
+    from pcia.web import app as modulo_app
+
+    monkeypatch.setattr(modulo_app.gestor, "_memory_dir", tmp_path)
+    payload = {
+        "provider": "openai_compat",
+        "base_url": "http://localhost:11434/v1",
+        "model": "qwen2.5",
+        "spec_inicial": {"campo_inexistente": "x"},
+    }
+    resp = cliente.post("/api/sessions", json=payload)
+    assert resp.status_code == 400
+    assert "Datos de partida inválidos" in resp.json()["detail"]
+
+
+def test_health_devuelve_ok(cliente):
+    resp = cliente.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+def test_crear_sesion_respeta_el_limite_de_tasa(monkeypatch, tmp_path):
+    """Sin límite, un visitante podría abrir sesiones (cada una con su hilo
+    y su directorio en /tmp) sin parar. Se prueba contra un límite bajo para
+    no depender del valor real configurado en la app."""
+    from pcia.web import app as modulo_app
+    from pcia.web.ratelimit import LimitadorTasa
+
+    class FakeProviderLocal:
+        def generate(self, system_prompt, messages):
+            return '{"message_to_user": "hola", "updates": {}, "done": false}'
+
+    monkeypatch.setattr(modulo_app, "limitador", LimitadorTasa(max_eventos=2, ventana_segundos=60.0))
+    monkeypatch.setattr(modulo_app.gestor, "_memory_dir", tmp_path)
+    monkeypatch.setattr("pcia.web.sessions.crear_provider", lambda config: FakeProviderLocal())
+
+    cliente = TestClient(app)
+    payload = {"provider": "openai_compat", "base_url": "http://localhost:11434/v1", "model": "qwen2.5"}
+
+    assert cliente.post("/api/sessions", json=payload).status_code == 200
+    assert cliente.post("/api/sessions", json=payload).status_code == 200
+    tercera = cliente.post("/api/sessions", json=payload)
+    assert tercera.status_code == 429
+
+
 def test_discover_models_devuelve_ids_ordenados(monkeypatch, cliente):
     monkeypatch.setattr(
         httpx,
@@ -131,3 +196,18 @@ def test_discover_models_acepta_formato_ollama(monkeypatch, cliente):
 
     assert resp.status_code == 200
     assert resp.json() == {"modelos": ["unsloth/Qwen3-30B-A3B-GGUF"]}
+
+
+def test_discover_modelos_usa_api_nativa_de_ollama_como_respaldo(monkeypatch, cliente):
+    def responder(url, headers, timeout):
+        if url.endswith("/v1/models"):
+            return RespuestaFalsa({}, status_code=404)
+        assert url == "http://localhost:11434/api/tags"
+        return RespuestaFalsa({"models": [{"name": "qwen3:8b"}]})
+
+    monkeypatch.setattr(httpx, "get", responder)
+    resp = cliente.post(
+        "/api/discover-models", json={"base_url": "http://localhost:11434/v1"}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"modelos": ["qwen3:8b"]}

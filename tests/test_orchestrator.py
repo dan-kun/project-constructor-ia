@@ -6,9 +6,12 @@ import pytest
 
 from conftest import FakeProvider
 from pcia.agents.constructor import Constructor, DestinoInvalidoError
+from pcia.agents.interviewer import Entrevistador
+from pcia.domain.models import ProjectSpec
 from pcia.orchestrator.loop import (
     MAX_TURNOS_ENTREVISTA,
     CoherenciaNoResueltaError,
+    LimitesCiclo,
     LimiteDeTurnosError,
     Orquestador,
     VerificacionFallidaError,
@@ -70,7 +73,7 @@ UPDATES_INCOHERENTES = {
 UPDATES_SIN_AUTH = {**UPDATES_COMPLETOS, "autenticacion": "ninguna"}
 
 
-def crear_orquestador(provider, entradas, tmp_path, docs=None):
+def crear_orquestador(provider, entradas, tmp_path, docs=None, limites=None, spec_inicial=None):
     entradas = iter(entradas)
     salidas: list[str] = []
     orq = Orquestador(
@@ -79,6 +82,8 @@ def crear_orquestador(provider, entradas, tmp_path, docs=None):
         entrada=lambda _prompt: next(entradas),
         salida=salidas.append,
         docs=docs,
+        limites=limites,
+        spec_inicial=spec_inicial,
     )
     return orq, salidas
 
@@ -176,6 +181,83 @@ def test_entrevista_sin_fin_corta_por_limite_de_turnos(tmp_path):
         orq.ejecutar()
 
 
+# --- checkpoint de progreso (retomar sin volver a cero) -----------------------
+
+
+def test_checkpoint_se_borra_al_completar_con_exito(tmp_path):
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            SIN_HALLAZGOS_LLM,
+            DOCS_LLM,
+        ]
+    )
+    orq, _ = crear_orquestador(
+        provider, ["", str(tmp_path / "proyecto")], tmp_path
+    )
+
+    orq.ejecutar()
+
+    assert orq.ruta_checkpoint is None
+
+
+def test_checkpoint_conserva_el_progreso_ante_una_falla(tmp_path):
+    """El bug reportado: sin esto, cualquier falla obligaba a reempezar la
+    entrevista de cero, aunque ya se hubiera respondido casi todo."""
+    provider = FakeProvider(
+        [respuesta_json("¿Y el lenguaje?", {"nombre": "mi-api"})]
+        + [respuesta_json("¿y?")] * MAX_TURNOS_ENTREVISTA
+    )
+    orq, _ = crear_orquestador(
+        provider, ["sigo"] * (MAX_TURNOS_ENTREVISTA + 1), tmp_path
+    )
+
+    with pytest.raises(LimiteDeTurnosError):
+        orq.ejecutar()
+
+    ruta = orq.ruta_checkpoint
+    assert ruta is not None and ruta.exists()
+    guardado = json.loads(ruta.read_text(encoding="utf-8"))
+    # el primer update sí se aplicó antes de que la entrevista se estancara
+    assert guardado["nombre"] == "mi-api"
+
+
+def test_spec_inicial_precarga_la_entrevista_y_solo_pregunta_lo_que_falta(tmp_path):
+    """Retomar un checkpoint (o corregir un dato ya respondido) arranca con
+    la spec pre-llena: el Entrevistador solo tiene que completar lo que
+    falta, no volver a preguntar todo desde cero."""
+    spec_parcial = ProjectSpec(**{k: v for k, v in UPDATES_COMPLETOS.items() if k != "ci_cd"})
+    provider = FakeProvider(
+        [respuesta_json("Solo falta el CI/CD.", {"ci_cd": "github actions"}, done=True)]
+    )
+    entrevistador = Entrevistador(provider, spec_parcial)
+
+    entrevistador.iniciar()
+
+    system_prompt, _ = provider.llamadas[0]
+    assert "ci_cd" in system_prompt  # es el único campo que figura como faltante
+    assert '"nombre": "mi api"' in system_prompt  # el resto ya está precargado
+    assert spec_parcial.ci_cd == "github actions"
+
+
+def test_limites_configurables_acortan_el_ciclo(tmp_path):
+    """Un ``LimitesCiclo`` propio corta la entrevista antes que el default:
+    prueba que el override de config.yaml realmente llega al loop."""
+    limites = LimitesCiclo(max_turnos_entrevista=2)
+    provider = FakeProvider([respuesta_json("¿y?")] * 3)
+    orq, _ = crear_orquestador(provider, ["sigo"] * 3, tmp_path, limites=limites)
+
+    with pytest.raises(LimiteDeTurnosError, match="2 turnos"):
+        orq.ejecutar()
+    # 1 llamada de ``iniciar()`` + 2 de ``responder()`` (una por turno del loop)
+    assert len(provider.llamadas) == 3
+
+
+def test_sin_limites_explicitos_usa_los_defaults_del_sistema(tmp_path):
+    orq, _ = crear_orquestador(FakeProvider([]), [], tmp_path)
+    assert orq._limites == LimitesCiclo()
+
+
 # --- ciclo de coherencia ------------------------------------------------------
 
 
@@ -194,8 +276,9 @@ def test_hallazgo_corregido_via_entrevistador_y_reauditoria(tmp_path):
         ]
     )
     # confirma la spec; el hallazgo rojo solo ofrece corregir (acepta la
-    # corrección propuesta con enter); elige destino
-    entradas = ["", "", str(tmp_path / "proyecto")]
+    # corrección propuesta con enter); confirma la resolución (sin ajuste);
+    # elige destino
+    entradas = ["", "", "", str(tmp_path / "proyecto")]
     orq, salidas = crear_orquestador(provider, entradas, tmp_path)
 
     ruta = orq.ejecutar()
@@ -211,6 +294,36 @@ def test_hallazgo_corregido_via_entrevistador_y_reauditoria(tmp_path):
     _, mensajes = provider.llamadas[2]
     assert "serverless-websockets" in mensajes[-1].content
     assert "Corrección propuesta" in mensajes[-1].content
+
+
+def test_hallazgo_resuelto_en_la_ultima_ronda_permite_construir(tmp_path):
+    """Regresión de un bug real: la última ronda de auditoría permitida
+    reportaba los hallazgos y el ciclo escalaba directo a
+    ``CoherenciaNoResueltaError`` sin darle turno al usuario para
+    resolverlos (solo pasaba en las rondas intermedias). Con
+    ``max_ciclos_coherencia=1`` la única ronda posible es también la
+    última: tiene que poder resolverse igual que cualquier otra."""
+    limites = LimitesCiclo(max_ciclos_coherencia=1)
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_INCOHERENTES, done=True),
+            SIN_HALLAZGOS_LLM,  # auditoría 1 (única ronda de resolución)
+            respuesta_json(
+                "Listo, paso la infraestructura a contenedores.",
+                {"infraestructura": "docker"},
+                done=True,
+            ),
+            SIN_HALLAZGOS_LLM,  # auditoría final de confirmación: ya coherente
+            DOCS_LLM,
+        ]
+    )
+    entradas = ["", "", "", str(tmp_path / "proyecto")]
+    orq, _ = crear_orquestador(provider, entradas, tmp_path, limites=limites)
+
+    ruta = orq.ejecutar()
+
+    registro = json.loads(ruta.read_text(encoding="utf-8"))
+    assert registro["spec"]["infraestructura"] == "docker"
 
 
 def test_riesgo_amarillo_asumido_queda_documentado_y_no_bloquea(tmp_path):
@@ -252,7 +365,137 @@ def test_hallazgo_rojo_no_es_asumible_y_abortar_cancela(tmp_path):
         orq.ejecutar()
 
 
+def test_hallazgos_llm_sin_regla_no_bloquean_el_ciclo(tmp_path):
+    """El pase LLM del Auditor es consultivo (ver Auditor.pendientes() y
+    ``_normalizar_hallazgo_llm``): aunque marque severidad rojo/amarillo,
+    solo lo que confirma la matriz determinística de reglas puede iniciar
+    el loop interactivo. Sin esto, un hallazgo solo-LLM que se reformula
+    con un id distinto en cada ronda (comportamiento real observado en uso)
+    nunca converge dentro del límite de ciclos."""
+    hallazgo_solo_llm = json.dumps(
+        {
+            "hallazgos": [
+                {
+                    "id": "gestion-secretos-insegura",
+                    "severidad": "rojo",
+                    "mensaje": "x",
+                    "correccion_propuesta": "y",
+                }
+            ]
+        }
+    )
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_COMPLETOS, done=True),
+            hallazgo_solo_llm,  # auditoría única: hallazgo solo-LLM, no bloquea
+            DOCS_LLM,
+        ]
+    )
+    # sin turnos para el hallazgo LLM: si el ciclo intentara resolverlo,
+    # ``next(entradas)`` fallaría con StopIteration
+    entradas = ["", str(tmp_path / "proyecto")]
+    orq, _ = crear_orquestador(provider, entradas, tmp_path)
+
+    ruta = orq.ejecutar()
+
+    assert ruta.exists()
+
+
+def test_ajuste_tras_resolver_hallazgo_no_se_confunde_con_el_siguiente(tmp_path):
+    """Regresión de un bug real detectado en uso: el Entrevistador suele
+    cerrar su confirmación con una pregunta propia, y con más de un hallazgo
+    pendiente el orquestador pasaba directo al siguiente sin darle al
+    usuario turno para responderla — su respuesta terminaba interpretada
+    como la decisión sobre el hallazgo siguiente. Acá el usuario responde
+    con un AJUSTE (no una confirmación) justo después de resolver el primer
+    hallazgo, y se verifica que ese texto viaja al Entrevistador como
+    ajuste — no se pisa con la pregunta del segundo hallazgo."""
+    updates_doble = {
+        **UPDATES_COMPLETOS,
+        "descripcion": "chat con websockets en tiempo real",
+        "infraestructura": "aws lambda (serverless)",
+        "autenticacion": "ninguna",
+    }
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", updates_doble, done=True),
+            SIN_HALLAZGOS_LLM,  # auditoría 1: ambos hallazgos son de regla
+            respuesta_json(  # resuelve el rojo (serverless-websockets)
+                "Listo, paso a contenedores. ¿Confirmás?",
+                {"infraestructura": "docker"},
+                done=True,
+            ),
+            respuesta_json(  # el ajuste del usuario tras esa confirmación
+                "Entendido, agrego JWT.", {"autenticacion": "jwt"}, done=True
+            ),
+            respuesta_json(  # resuelve el amarillo (api-sin-autenticacion)
+                "Listo, ya está.", {}, done=True
+            ),
+            SIN_HALLAZGOS_LLM,  # auditoría 2: ya coherente
+            DOCS_LLM,
+        ]
+    )
+    entradas = [
+        "",  # confirma la spec
+        "",  # hallazgo rojo: aplica la corrección propuesta
+        "mejor agreguemos JWT ya",  # AJUSTE, no una confirmación
+        "",  # confirma tras aplicar el ajuste
+        "",  # hallazgo amarillo: elige corregir (no asumir)
+        "",  # cómo resolverlo: aplica la corrección propuesta
+        "",  # confirma la resolución del amarillo
+        str(tmp_path / "proyecto"),
+    ]
+    orq, _ = crear_orquestador(provider, entradas, tmp_path)
+
+    ruta = orq.ejecutar()
+
+    registro = json.loads(ruta.read_text(encoding="utf-8"))
+    assert registro["spec"]["infraestructura"] == "docker"
+    assert registro["spec"]["autenticacion"] == "jwt"
+    assert len(provider.llamadas) == 7  # se consumió cada respuesta enlatada
+    # el ajuste llegó al Entrevistador como ajuste, no como decisión del
+    # hallazgo siguiente
+    _, mensajes_ajuste = provider.llamadas[3]
+    assert "pide un ajuste sobre cómo se resolvió" in mensajes_ajuste[-1].content
+    assert "mejor agreguemos JWT ya" in mensajes_ajuste[-1].content
+
+
+def test_confirmacion_de_hallazgo_esta_acotada(tmp_path):
+    """Si el usuario nunca confirma, el sistema sigue igual tras el límite
+    (mismo principio que el resto de los loops acotados: nunca cuelga)."""
+    provider = FakeProvider(
+        [
+            respuesta_json("Resumen.", UPDATES_INCOHERENTES, done=True),
+            SIN_HALLAZGOS_LLM,  # auditoría 1
+            respuesta_json("Corrijo.", {"infraestructura": "docker"}, done=True),
+            respuesta_json("Sigo sin confirmar.", {}, done=True),
+            respuesta_json("Sigo sin confirmar.", {}, done=True),
+            respuesta_json("Sigo sin confirmar.", {}, done=True),
+            SIN_HALLAZGOS_LLM,  # auditoría 2: ya coherente (infraestructura corregida)
+            DOCS_LLM,
+        ]
+    )
+    limites = LimitesCiclo(max_ajustes_por_hallazgo=3)
+    entradas = [
+        "",  # confirma la spec
+        "",  # hallazgo rojo: aplica la corrección propuesta
+        "sigo sin confirmar 1",
+        "sigo sin confirmar 2",
+        "sigo sin confirmar 3",  # se agota el límite: sigue de todos modos
+        str(tmp_path / "proyecto"),
+    ]
+    orq, _ = crear_orquestador(provider, entradas, tmp_path, limites=limites)
+
+    ruta = orq.ejecutar()
+
+    assert ruta.exists()  # no se cuelga ni escala: sigue tras agotar el límite
+    assert len(provider.llamadas) == 8
+
+
 def test_coherencia_no_resuelta_escala_tras_el_limite(tmp_path):
+    """El usuario tiene que poder responder a los hallazgos de TODAS las
+    rondas, incluida la última: el ciclo hace ``max_ciclos`` rondas de
+    resolución y una auditoría final de confirmación antes de escalar."""
     sin_cambios = respuesta_json("Tomo nota pero no cambio nada.")
     provider = FakeProvider(
         [
@@ -261,11 +504,14 @@ def test_coherencia_no_resuelta_escala_tras_el_limite(tmp_path):
             sin_cambios,  # repregunta 1: no corrige
             SIN_HALLAZGOS_LLM,  # auditoría 2
             sin_cambios,  # repregunta 2: no corrige
-            SIN_HALLAZGOS_LLM,  # auditoría 3 (última)
+            SIN_HALLAZGOS_LLM,  # auditoría 3
+            sin_cambios,  # repregunta 3: no corrige
+            SIN_HALLAZGOS_LLM,  # auditoría final de confirmación (sigue sin resolver)
         ]
     )
-    # el hallazgo rojo pide una sola entrada por ciclo (cómo resolverlo)
-    entradas = ["", "", ""]
+    # el hallazgo rojo pide dos entradas por ciclo: cómo resolverlo y la
+    # confirmación de la resolución (3 ciclos con repregunta antes de escalar)
+    entradas = ["", "", "", "", "", "", ""]
     orq, _ = crear_orquestador(provider, entradas, tmp_path)
 
     with pytest.raises(CoherenciaNoResueltaError, match="serverless-websockets"):

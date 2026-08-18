@@ -22,14 +22,20 @@ def test_sesion_bridging_entrada_salida():
     sesion.enviar_input("hola")
     # "> " es el marcador genérico de turno normal de entrevista: la
     # pregunta real ya viajó por su propio salida() un instante antes, así
-    # que acá no debe reenviarse nada (a diferencia de un prompt con texto).
+    # que acá no debe reenviarse texto (a diferencia de un prompt con
+    # texto) — pero sí un marcador de "ahora se espera respuesta".
     assert sesion.entrada("> ") == "hola"
+    marcador = sesion.proximo_evento(timeout=1)
+    assert marcador is not None
+    assert marcador.texto == ""
+    assert marcador.espera_respuesta is True
 
     sesion.salida("mensaje al usuario")
     evento = sesion.proximo_evento(timeout=1)
     assert evento is not None
     assert evento.tipo == "mensaje"
     assert evento.texto == "mensaje al usuario"
+    assert evento.espera_respuesta is False
 
 
 def test_entrada_reenvia_prompts_con_texto_antes_de_bloquear():
@@ -65,6 +71,39 @@ def test_entrada_destino_muestra_mensaje_amigable_no_la_ruta_del_servidor():
     assert evento is not None
     assert "/opt/render" not in evento.texto
     assert "carpeta del proyecto" in evento.texto
+    assert evento.espera_respuesta is True
+
+
+# --- distinción "esperando respuesta" vs "trabajando" (indicador de actividad) -----
+
+
+def test_salida_informativa_no_marca_espera_respuesta():
+    """Un reporte de progreso (auditoría, verificación, etc.) no es un
+    punto donde el orquestador se detenga a esperar: el navegador debe
+    poder distinguirlo para no habilitar el input ni decir 'tu turno'."""
+    sesion = Sesion(id="test")
+    sesion.salida("Auditoría de coherencia — semáforo: 🟢 verde")
+
+    evento = sesion.proximo_evento(timeout=1)
+    assert evento is not None
+    assert evento.espera_respuesta is False
+
+
+def test_turno_normal_de_entrevista_emite_marcador_de_espera_sin_burbuja_vacia():
+    """El turno normal ('> ') no reenvía texto (la pregunta ya viajó por su
+    propio salida()), pero sí debe señalar que ahora se espera respuesta —
+    si no, el navegador nunca sabe que puede dejar de mostrar 'trabajando'."""
+    sesion = Sesion(id="test")
+    sesion.enviar_input("cualquier cosa")
+
+    sesion.entrada("> ")
+
+    evento = sesion.proximo_evento(timeout=1)
+    assert evento is not None
+    assert evento.texto == ""
+    assert evento.espera_respuesta is True
+    # el marcador (sin contenido) no ensucia el transcript: una sola línea
+    assert sesion.transcript.texto_completo() == "> cualquier cosa\n"
 
 
 def test_entrada_confina_el_destino_de_construccion_pese_a_path_traversal():
@@ -105,6 +144,162 @@ def test_guardar_transcript_registra_salidas_y_entradas_en_orden(tmp_path, monke
 def test_proximo_evento_sin_eventos_devuelve_none():
     sesion = Sesion(id="test")
     assert sesion.proximo_evento(timeout=0.05) is None
+
+
+# --- documentos del cliente subidos desde el navegador (U9) -----------------------
+
+
+def test_validar_documentos_acepta_md_y_txt():
+    from pcia.web.sessions import validar_documentos
+
+    validar_documentos([("requerimientos.md", "el cliente quiere una API")])
+    validar_documentos([("mail.txt", "contenido del mail")])
+
+
+def test_validar_documentos_rechaza_extension_no_soportada():
+    from pcia.web.sessions import validar_documentos
+
+    with pytest.raises(ConfigError, match="Formato no soportado"):
+        validar_documentos([("requerimientos.pdf", "x")])
+
+
+def test_validar_documentos_rechaza_contenido_vacio():
+    from pcia.web.sessions import validar_documentos
+
+    with pytest.raises(ConfigError, match="está vacío"):
+        validar_documentos([("acta.md", "   \n")])
+
+
+def test_validar_documentos_rechaza_demasiados_documentos():
+    from pcia.web.sessions import MAX_DOCUMENTOS_WEB, validar_documentos
+
+    documentos = [(f"doc{i}.md", "contenido") for i in range(MAX_DOCUMENTOS_WEB + 1)]
+    with pytest.raises(ConfigError, match="Máximo"):
+        validar_documentos(documentos)
+
+
+def test_validar_documentos_rechaza_documento_demasiado_grande():
+    from pcia.web.sessions import MAX_CARACTERES_POR_DOCUMENTO_WEB, validar_documentos
+
+    with pytest.raises(ConfigError, match="supera el máximo"):
+        validar_documentos([("grande.md", "x" * (MAX_CARACTERES_POR_DOCUMENTO_WEB + 1))])
+
+
+def test_guardar_documentos_sanitiza_nombres_con_path_traversal(tmp_path):
+    from pcia.web.sessions import _guardar_documentos
+
+    rutas = _guardar_documentos(tmp_path, [("../../etc/malicioso.md", "contenido")])
+
+    assert len(rutas) == 1
+    assert rutas[0] == tmp_path / "docs" / "malicioso.md"
+    assert rutas[0].read_text(encoding="utf-8") == "contenido"
+    assert not (tmp_path.parent / "etc" / "malicioso.md").exists()
+
+
+def test_gestor_crear_con_documentos_analiza_antes_de_entrevistar(monkeypatch, tmp_path):
+    """Equivalente web de --docs (ver docs/UX.md U9): el Analista corre
+    antes que el Entrevistador y su resumen llega como mensaje."""
+    from conftest import FakeProvider
+
+    from pcia.web import sessions as web_sessions
+
+    analisis = json.dumps(
+        {
+            "propuestas": {
+                "lenguaje": {"valor": "python", "evidencia": "una API en Python"}
+            },
+            "notas": [],
+            "preguntas_abiertas": [],
+        }
+    )
+    provider = FakeProvider(
+        [
+            analisis,
+            json.dumps({"message_to_user": "¿Qué más?", "updates": {}, "done": False}),
+        ]
+    )
+    monkeypatch.setattr(web_sessions, "crear_provider", lambda config: provider)
+
+    gestor = GestorSesiones(memory_dir=tmp_path / "memory")
+    sesion = gestor.crear(
+        {"provider": "openai_compat", "openai_compat": {}},
+        documentos=[("requerimientos.md", "El cliente quiere una API en Python.")],
+    )
+
+    mensajes = []
+    for _ in range(5):
+        evento = sesion.proximo_evento(timeout=5)
+        assert evento is not None
+        mensajes.append(evento.texto)
+        if "Análisis de la documentación" in evento.texto:
+            break
+    assert any("Análisis de la documentación" in m for m in mensajes)
+    assert (sesion.directorio_base / "docs" / "requerimientos.md").exists()
+
+
+def test_crear_sesion_con_documentos_invalidos_falla_sin_abrir_hilo(monkeypatch, tmp_path):
+    from conftest import FakeProvider
+
+    from pcia.web import sessions as web_sessions
+
+    monkeypatch.setattr(
+        web_sessions, "crear_provider", lambda config: FakeProvider([])
+    )
+    gestor = GestorSesiones(memory_dir=tmp_path / "memory")
+
+    with pytest.raises(ConfigError, match="Formato no soportado"):
+        gestor.crear(
+            {"provider": "openai_compat", "openai_compat": {}},
+            documentos=[("malicioso.pdf", "x")],
+        )
+    assert gestor._sesiones == {}
+
+
+# --- corregir/retomar con datos ya respondidos (U3/U4/U5) -------------------------
+
+
+def test_gestor_crear_con_spec_inicial_precarga_la_entrevista(monkeypatch, tmp_path):
+    """Corregir algo ya respondido, o retomar tras un error: una sesión
+    nueva puede arrancar con campos ya completos en vez de la spec vacía."""
+    from conftest import FakeProvider
+
+    from pcia.web import sessions as web_sessions
+
+    provider = FakeProvider(
+        [json.dumps({"message_to_user": "Solo falta el CI/CD.", "updates": {}, "done": False})]
+    )
+    monkeypatch.setattr(web_sessions, "crear_provider", lambda config: provider)
+
+    gestor = GestorSesiones(memory_dir=tmp_path / "memory")
+    sesion = gestor.crear(
+        {"provider": "openai_compat", "openai_compat": {}},
+        spec_inicial={"nombre": "mi-api", "lenguaje": "python"},
+    )
+
+    assert sesion.orquestador.spec.nombre == "mi-api"
+    assert sesion.orquestador.spec.lenguaje == "python"
+    assert "nombre" not in sesion.orquestador.spec.campos_faltantes()
+    assert "lenguaje" not in sesion.orquestador.spec.campos_faltantes()
+    evento = sesion.proximo_evento(timeout=5)
+    assert evento is not None
+    system_prompt, _ = provider.llamadas[0]
+    assert '"nombre": "mi-api"' in system_prompt  # la spec ya viaja precargada
+
+
+def test_crear_sesion_con_spec_inicial_invalida_devuelve_error(monkeypatch, tmp_path):
+    from conftest import FakeProvider
+
+    from pcia.web import sessions as web_sessions
+
+    monkeypatch.setattr(web_sessions, "crear_provider", lambda config: FakeProvider([]))
+    gestor = GestorSesiones(memory_dir=tmp_path / "memory")
+
+    with pytest.raises(ConfigError, match="Datos de partida inválidos"):
+        gestor.crear(
+            {"provider": "openai_compat", "openai_compat": {}},
+            spec_inicial={"campo_inexistente": "x"},
+        )
+    assert gestor._sesiones == {}
 
 
 def test_validar_config_proveedor_anthropic_default_model():
@@ -154,6 +349,34 @@ def test_gestor_crear_corre_orquestador_en_hilo_y_publica_primer_mensaje(
     # respuesta del usuario (igual que la CLI esperando input()).
     time.sleep(0.05)
     assert sesion.hilo.is_alive()
+
+
+def test_credenciales_invalidas_fallan_rapido_como_evento_de_error(monkeypatch, tmp_path):
+    """La sesión se crea (200) apenas se valida la FORMA de la config —
+    ``crear_provider`` no hace ninguna llamada de red. Una credencial mala
+    recién se descubre en la primera consulta real, que el orquestador hace
+    de inmediato en el hilo de fondo: no hace falta un ping de validación
+    aparte, alcanza con que ese primer fallo llegue rápido como evento
+    'error' (no se pierda en silencio ni tumbe el proceso)."""
+    from pcia.domain.ports import LLMProviderError
+    from pcia.web import sessions as web_sessions
+
+    class ProviderConCredencialInvalida:
+        def generate(self, system_prompt, messages):
+            raise LLMProviderError("401 Unauthorized: API key inválida")
+
+    monkeypatch.setattr(
+        web_sessions, "crear_provider", lambda config: ProviderConCredencialInvalida()
+    )
+
+    gestor = GestorSesiones(memory_dir=tmp_path / "memory")
+    sesion = gestor.crear({"provider": "openai_compat", "openai_compat": {}})
+
+    evento = sesion.proximo_evento(timeout=5)
+    assert evento is not None
+    assert evento.tipo == "error"
+    assert "API key inválida" in evento.texto
+    assert sesion.ruta_transcript is not None and sesion.ruta_transcript.exists()
 
 
 def test_flujo_completo_web_muestra_confirmacion_y_guarda_transcript(monkeypatch, tmp_path):
@@ -266,6 +489,41 @@ def test_memoria_se_aisla_por_sesion_por_defecto(monkeypatch, tmp_path):
     assert Path(otra.orquestador._memory_dir) != memoria_usada
 
 
+def test_limpiar_expiradas_borra_el_directorio_de_la_sesion(monkeypatch, tmp_path):
+    """Sin esto, cada sesión vencida queda huérfana en /tmp para siempre
+    (proyecto generado, transcript y memoria propia incluidos)."""
+    from pcia.web import sessions as web_sessions
+
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+
+    class FakeProviderLocal:
+        def generate(self, system_prompt, messages):
+            return json.dumps({"message_to_user": "hola", "updates": {}, "done": False})
+
+    monkeypatch.setattr(web_sessions, "crear_provider", lambda config: FakeProviderLocal())
+
+    gestor = GestorSesiones(memory_dir=tmp_path / "memory")
+    sesion = gestor.crear({"provider": "openai_compat", "openai_compat": {}})
+    # Espera a que el hilo de fondo llegue a bloquearse esperando respuesta
+    # (ver ``espera_respuesta``): antes de eso puede seguir escribiendo en
+    # el directorio de la sesión (p. ej. el checkpoint de progreso), lo que
+    # compite con el rmtree de abajo — no es el borrado lo que se prueba acá.
+    for _ in range(20):
+        evento = sesion.proximo_evento(timeout=2)
+        assert evento is not None
+        if evento.espera_respuesta:
+            break
+    directorio = sesion.directorio_base
+    directorio.mkdir(parents=True, exist_ok=True)
+    (directorio / "marca.txt").write_text("restos de la sesión", encoding="utf-8")
+
+    sesion.ultimo_acceso -= web_sessions.TTL_SESION_SEGUNDOS + 1
+    gestor._limpiar_expiradas()
+
+    assert sesion.id not in gestor._sesiones
+    assert not directorio.exists()
+
+
 def test_memoria_compartida_es_opt_in(monkeypatch, tmp_path):
     from pcia.web import sessions as web_sessions
 
@@ -282,6 +540,115 @@ def test_memoria_compartida_es_opt_in(monkeypatch, tmp_path):
     sesion = gestor.crear({"provider": "openai_compat", "openai_compat": {}})
 
     assert Path(sesion.orquestador._memory_dir) == compartida
+
+
+# --- decisiones estructuradas (botones) -------------------------------------------
+
+
+def test_confirmar_spec_ofrece_boton_de_confirmacion():
+    sesion = Sesion(id="test")
+    sesion.enviar_input("")
+    sesion.entrada("¿Confirmás la especificación? (enter = continuar, o escribí qué ajustar) ")
+
+    evento = sesion.proximo_evento(timeout=1)
+    assert evento is not None
+    assert evento.opciones == [{"texto": "Confirmar especificación", "valor": ""}]
+
+
+def test_hallazgo_rojo_ofrece_aplicar_o_abortar():
+    sesion = Sesion(id="test")
+    sesion.enviar_input("")
+    sesion.entrada(
+        "El hallazgo 'x' es 🔴 bloqueante y no puede asumirse. ¿Cómo lo querés "
+        "resolver? (enter = aplicar la corrección propuesta / 'abortar' = "
+        "cancelar el proyecto) "
+    )
+
+    evento = sesion.proximo_evento(timeout=1)
+    assert evento is not None
+    assert evento.opciones == [
+        {"texto": "Aplicar corrección propuesta", "valor": ""},
+        {"texto": "Abortar el proyecto", "valor": "abortar"},
+    ]
+
+
+def test_hallazgo_amarillo_ofrece_asumir_o_corregir():
+    sesion = Sesion(id="test")
+    sesion.enviar_input("")
+    sesion.entrada("¿Asumís el riesgo 'x'? (s = asumir / N = corregir) ")
+
+    evento = sesion.proximo_evento(timeout=1)
+    assert evento is not None
+    assert evento.opciones == [
+        {"texto": "Asumir el riesgo", "valor": "s"},
+        {"texto": "Corregir", "valor": "n"},
+    ]
+
+
+def test_como_resolver_generico_ofrece_aplicar_correccion():
+    """Distinto del caso rojo: acá 'cómo lo querés resolver' aparece solo,
+    sin la frase 'no puede asumirse' delante (viene del camino amarillo)."""
+    sesion = Sesion(id="test")
+    sesion.enviar_input("")
+    sesion.entrada("¿Cómo lo querés resolver? (enter = aplicar la corrección propuesta) ")
+
+    evento = sesion.proximo_evento(timeout=1)
+    assert evento is not None
+    assert evento.opciones == [{"texto": "Aplicar corrección propuesta", "valor": ""}]
+
+
+def test_verificacion_fallida_ofrece_entregar_o_cancelar():
+    sesion = Sesion(id="test")
+    sesion.enviar_input("")
+    sesion.entrada(
+        "La verificación sigue fallando tras las correcciones. "
+        "¿Entrego el proyecto igual? (s/N) "
+    )
+
+    evento = sesion.proximo_evento(timeout=1)
+    assert evento is not None
+    assert evento.opciones == [
+        {"texto": "Entregar igual", "valor": "s"},
+        {"texto": "Cancelar", "valor": "n"},
+    ]
+
+
+def test_dockerfile_reescrito_ofrece_ejecutar_o_cancelar():
+    sesion = Sesion(id="test")
+    sesion.enviar_input("")
+    sesion.entrada(
+        "El corrector reescribió el Dockerfile. ¿Ejecuto el build con el "
+        "Dockerfile corregido? (S/n) "
+    )
+
+    evento = sesion.proximo_evento(timeout=1)
+    assert evento is not None
+    assert evento.opciones == [
+        {"texto": "Ejecutar el build", "valor": "s"},
+        {"texto": "Cancelar", "valor": "n"},
+    ]
+
+
+def test_prompts_sin_decision_reconocida_no_llevan_opciones():
+    sesion = Sesion(id="test")
+    sesion.enviar_input("respuesta libre")
+    sesion.entrada("¿Cuál es el lenguaje del proyecto? ")
+
+    evento = sesion.proximo_evento(timeout=1)
+    assert evento is not None
+    assert evento.opciones is None
+
+
+def test_destino_no_ofrece_opciones_estructuradas():
+    """El prompt de destino ya se reemplaza por un mensaje propio (ver test
+    de arriba); tampoco debería llevar botones."""
+    sesion = Sesion(id="sesion-x")
+    sesion.enviar_input("mi-api")
+    sesion.entrada("¿Dónde genero el proyecto? (enter = /home/render/x) ")
+
+    evento = sesion.proximo_evento(timeout=1)
+    assert evento is not None
+    assert evento.opciones is None
 
 
 # --- panel de estado observable --------------------------------------------------

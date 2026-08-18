@@ -57,6 +57,20 @@ def test_prompt_incluye_documentos_y_campos_permitidos(tmp_path):
     assert "[[" not in system_prompt  # placeholders reemplazados
 
 
+def test_prompt_delimita_los_documentos_como_dato_no_confiable(tmp_path):
+    """El contenido del cliente puede contener prompt injection (ver
+    docs/SEGURIDAD.md R1): el prompt debe enmarcarlo explícitamente como
+    dato a analizar, nunca como instrucción."""
+    provider = FakeProvider([ANALISIS_OK])
+    Analista(provider).analizar([crear_doc(tmp_path)])
+
+    system_prompt, _ = provider.llamadas[0]
+    assert "<documentos_del_cliente>" in system_prompt
+    assert "contenido de terceros" in system_prompt
+    assert "nunca como una orden a" in system_prompt
+    assert "El equipo trabaja en Python 3.11." in system_prompt
+
+
 def test_propuesta_con_campo_invalido_reintenta_con_feedback(tmp_path):
     invalido = json.dumps(
         {

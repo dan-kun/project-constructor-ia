@@ -313,8 +313,17 @@ def test_build_y_smoke_ok_con_limpieza_de_imagen(monkeypatch, tmp_path):
 
     assert [c.estado for c in chequeos] == ["ok", "ok", "ok"]
     comandos = [c[0] for c in ejecutor.comandos]
-    assert comandos[0] == ["docker", "build", "-t", "pcia-verif-demo", "."]
-    assert comandos[1] == ["docker", "run", "--rm", "pcia-verif-demo", "python", "-c", "import x"]
+    # límites de recursos (docs/SEGURIDAD.md R2): el build necesita red para
+    # instalar dependencias, el smoke test no.
+    assert comandos[0] == [
+        "docker", "build", "--memory", "1g", "--cpu-quota", "200000",
+        "-t", "pcia-verif-demo", ".",
+    ]
+    assert "--network" not in comandos[0]
+    assert comandos[1] == [
+        "docker", "run", "--rm", "--memory", "1g", "--cpus", "2", "--network", "none",
+        "pcia-verif-demo", "python", "-c", "import x",
+    ]
     assert comandos[2] == ["ruff", "check", "."]
     assert comandos[3][:2] == ["docker", "rmi"]  # limpieza best-effort
     assert all(c[1] == tmp_path for c in ejecutor.comandos)

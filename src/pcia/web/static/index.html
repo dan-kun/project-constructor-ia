@@ -45,6 +45,7 @@
     <label for="openai-url">Base URL</label>
     <div class="fila-con-boton">
       <input id="openai-url" type="text" value="http://localhost:11434/v1" />
+      <button type="button" id="usar-ollama" class="boton-secundario">Usar Ollama local</button>
       <button type="button" id="usar-openrouter" class="boton-secundario">Usar OpenRouter</button>
     </div>
 
@@ -69,14 +70,35 @@
     <input id="openai-key" type="password" autocomplete="off" />
   </div>
 
+  <div class="campo">
+    <label for="documentos-cliente">
+      Documentación del cliente (opcional — .md/.txt, hasta 5 archivos)
+    </label>
+    <input id="documentos-cliente" type="file" accept=".md,.txt" multiple />
+    <p class="hint">
+      El Analista de Documentos la lee antes de empezar y propone valores con
+      la cita que los respalda; vos confirmás cada propuesta durante la
+      entrevista, nunca se aplican solas.
+    </p>
+    <p id="lista-documentos" class="hint"></p>
+  </div>
+
   <button id="iniciar">Iniciar entrevista</button>
   <p id="error-setup" class="error oculto"></p>
 </main>
 
 <div id="area-sesion" class="area-sesion oculto">
 <main id="chat" class="panel">
-  <div id="estado" class="estado">Conectando…</div>
+  <div class="fila-estado">
+    <div id="estado" class="estado">Conectando…</div>
+    <button type="button" id="corregir-sesion" class="boton-secundario oculto"
+            title="Abre la última respuesta para editarla, sin perder el resto de la conversación">
+      ✏️ Corregir mi última respuesta
+    </button>
+  </div>
   <div id="mensajes" class="mensajes" role="log" aria-live="polite"></div>
+  <div id="opciones-decision" class="opciones-decision oculto" role="group"
+       aria-label="Opciones de respuesta rápida"></div>
   <form id="form-input" class="form-input">
     <textarea id="input-texto" rows="1" placeholder="Escribí tu respuesta…"
               title="Enter para enviar, Shift+Enter para salto de línea" disabled></textarea>

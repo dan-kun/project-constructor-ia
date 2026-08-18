@@ -106,6 +106,26 @@ def test_sin_postgresql_no_se_materializa_nada_de_base_de_datos(tmp_path):
     assert "compose" not in readme
 
 
+def test_fastapi_materializa_cors_y_hashing_de_contrasenas(tmp_path):
+    destino = tmp_path / "proyecto"
+    construir(
+        spec_para(
+            "fastapi",
+            cors="permitir https://app.ejemplo.com",
+            hashing_contrasenas="Argon2",
+        ),
+        destino,
+    )
+
+    main = (destino / "src/mi_api/main.py").read_text(encoding="utf-8")
+    security = (destino / "src/mi_api/security.py").read_text(encoding="utf-8")
+    pyproject = (destino / "pyproject.toml").read_text(encoding="utf-8")
+    assert "CORSMiddleware" in main
+    assert '"https://app.ejemplo.com"' in main
+    assert "PasswordHash" in security
+    assert "pwdlib[argon2]" in pyproject
+
+
 def test_condicional_con_campo_desconocido_falla_temprano(tmp_path):
     ruta = tmp_path / "mala.yaml"
     ruta.write_text(
