@@ -1,0 +1,58 @@
+# Sitio de documentación publicado en GitHub Pages.
+# El contenido es el mismo de docs/ (una sola fuente de verdad): acá solo se
+# define cómo se navega y se renderiza, incluidos los diagramas Mermaid.
+site_name: Project Constructor IA
+site_description: >-
+  Sistema multiagente para la creación asistida y auditada de estructuras de
+  proyectos de software. Trabajo final del diplomado IA Aplicada a
+  Organizaciones (UTN-FRBA).
+site_url: https://dan-kun.github.io/project-constructor-ia/
+repo_url: https://github.com/dan-kun/project-constructor-ia
+repo_name: dan-kun/project-constructor-ia
+edit_uri: ""
+
+theme:
+  name: material
+  language: es
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      toggle:
+        icon: material/weather-night
+        name: Cambiar a modo oscuro
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Cambiar a modo claro
+  features:
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - toc.follow
+
+nav:
+  - Inicio: index.md
+  - Diseño y roadmap: DISENO.md
+  - Arquitectura y diagramas: ARQUITECTURA.md
+  - Tecnologías: TECNOLOGIAS.md
+  - Ciberseguridad: SEGURIDAD.md
+  - Autoevaluación UX/UI: UX.md
+  - IA en co-work: IA-COWORK.md
+  - LLM/SLM local: LLM-LOCAL.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  # Renderiza los bloques ```mermaid como diagramas (Material carga mermaid.js).
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format

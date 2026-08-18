@@ -10,3 +10,5 @@ build/
 memory/*.json
 # configs locales por proveedor (pueden contener API keys)
 config.*.yaml
+# sitio generado por mkdocs (se publica desde CI, no se versiona)
+site/
