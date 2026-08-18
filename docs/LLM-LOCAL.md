@@ -234,7 +234,7 @@ memory_dir: memory
 YAML
 
 pcia --config config.local.yaml            # por consola
-pcia-web --config config.local.yaml        # por navegador
+pcia-web                                   # por navegador (el proveedor se elige ahí)
 ```
 
 El registro que queda en `memory/` incluye `proveedor` y `duracion_segundos`, lo que permite
