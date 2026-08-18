@@ -13,6 +13,7 @@ Trabajo final del diplomado *Inteligencia Artificial Aplicada a Organizaciones* 
 
 ## Enlaces del proyecto
 
+- **Aplicación en vivo**: [project-constructor-ia.onrender.com](https://project-constructor-ia.onrender.com)
 - **Código fuente**: [github.com/dan-kun/project-constructor-ia](https://github.com/dan-kun/project-constructor-ia)
 - **Estado de la suite**: [![CI](https://github.com/dan-kun/project-constructor-ia/actions/workflows/ci.yml/badge.svg)](https://github.com/dan-kun/project-constructor-ia/actions/workflows/ci.yml) — 277 tests en Python 3.10 y 3.12
 
