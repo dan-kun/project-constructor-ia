@@ -73,6 +73,8 @@ callables, así que consola y navegador se enchufan en el mismo puerto.
 
 - [x] Fase 8: adaptador web (FastAPI + SSE, sesiones con TTL, elección de proveedor desde el navegador, descarga del proyecto en `.zip` y de la conversación en `.txt`, panel de estado del ciclo en vivo, `render.yaml` para desplegar). Integra la rama de Paulo con el panel de estado portado del adaptador previo
 - [x] Entrega final: repo público con CI (pytest en 3.10 y 3.12), diagramas Mermaid, log de ciberseguridad con riesgo residual, autoevaluación UX/UI contra Nielsen, tabla de tecnologías con justificación, uso de IA en co-work y reflexión sobre LLM/SLM local (Parte 2)
+- [x] Robustecimiento del ciclo y del adaptador web: checkpoints para retomar una corrida interrumpida (`--resume`), límites del ciclo configurables desde `config.yaml`, subida de documentos del cliente desde el navegador, límite de tasa por IP, `pcia stats` (agregados sobre la memoria), y la suscripción de Claude habilitada en la web solo en ejecución local
+- [x] Publicación: aplicación desplegada en Render con keep-alive por GitHub Actions, documentación en GitHub Pages (MkDocs Material, build con `--strict`), y protección de la rama `main` (PR + CI obligatorios, sin force-push ni borrado)
 
 **Roadmap completo (8 fases).** Posibles próximos pasos: límites de recursos en los contenedores de verificación, más condicionales de plantilla (auth, otras bases), soporte PDF en el Analista, `EmbeddingProvider` para RAG sobre documentación de clientes (DISENO §9.1) y reglas candidatas del Aprendizaje al Auditor (con aprobación humana).
 
