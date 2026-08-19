@@ -1,0 +1,43 @@
+# Mantiene despierta la instancia de Render (plan gratuito).
+#
+# Render duerme un servicio gratuito tras ~15 min sin tráfico y tarda ~50 s en
+# despertar. El docente corrige abriendo el link, así que una instancia dormida
+# se ve como una app caída. Este ping la mantiene tibia.
+#
+# Cuota: el plan gratuito da 750 horas de instancia por mes y el mes tiene ~730,
+# así que mantenerla despierta 24/7 no deja margen: si se agota, Render SUSPENDE
+# el servicio hasta el mes siguiente, que es peor que tenerlo dormido. Por eso el
+# ping cubre una ventana amplia (08:00–23:00 ART) y no el día completo:
+# ~15 h/día ≈ 450 h/mes, con margen de sobra.
+name: Keep-alive
+
+on:
+  schedule:
+    # GitHub usa UTC; Argentina es UTC-3.
+    - cron: "*/10 11-23 * * *"   # 08:00–20:59 ART
+    - cron: "*/10 0-1 * * *"     # 21:00–22:59 ART
+  workflow_dispatch:              # disparo manual antes de la defensa
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Despertar la aplicación
+        run: |
+          URL="https://project-constructor-ia.onrender.com/health"
+          # Hasta 3 intentos: si estaba dormida, el primero puede tardar ~50 s.
+          for intento in 1 2 3; do
+            codigo=$(curl -s -o /tmp/respuesta -w '%{http_code}' --max-time 120 "$URL" || echo 000)
+            tiempo=$(cat /tmp/respuesta 2>/dev/null | head -c 100)
+            if [ "$codigo" = "200" ]; then
+              echo "Intento $intento: HTTP 200 — $tiempo"
+              exit 0
+            fi
+            echo "Intento $intento: HTTP $codigo — reintentando…"
+            sleep 20
+          done
+          echo "::error::La aplicación no respondió 200 tras 3 intentos."
+          exit 1
