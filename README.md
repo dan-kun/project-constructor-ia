@@ -14,9 +14,11 @@ Trabajo final del diplomado *Inteligencia Artificial Aplicada a Organizaciones* 
 | 🌐 **Aplicación en vivo** | https://project-constructor-ia.onrender.com |
 | 📚 **Documentación** | https://dan-kun.github.io/project-constructor-ia/ |
 
-> La instancia publicada corre sin Docker, así que la verificación profunda (build y smoke
-> test) se reporta como **inconcluso** en vez de aprobado: el sistema no afirma haber
-> verificado lo que no pudo verificar. El ciclo completo en verde se reproduce localmente.
+> **Sobre la instancia publicada.** Está alojada en un plan gratuito: si estuvo inactiva, la
+> primera carga puede demorar hasta ~50 s mientras se reactiva; las siguientes son inmediatas.
+> Además corre sin Docker, así que la verificación profunda (build y smoke test) se reporta
+> como **inconcluso** en vez de aprobado — el sistema no afirma haber verificado lo que no
+> pudo verificar. El ciclo completo en verde se reproduce localmente.
 
 > El diferencial no es generar archivos: es **cuestionar antes de construir y verificar
 > después**. El sistema no entrega nada que no pueda verificar, y declara explícitamente
