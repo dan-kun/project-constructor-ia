@@ -43,6 +43,11 @@ VAR_DESTINOS_PRIVADOS = "PCIA_WEB_PERMITIR_DESTINOS_PRIVADOS"
 # junto a las demás ni precargar la entrevista de otro (ver sessions.py).
 VAR_MEMORIA_COMPARTIDA = "PCIA_WEB_MEMORIA_COMPARTIDA"
 
+# La suscripción de Claude usa la CLI instalada en la máquina que sirve la app:
+# tiene sentido en una corrida local y no en una instancia publicada, donde esa
+# CLI no existe. Se habilita con el mismo criterio que los destinos internos.
+VAR_SUSCRIPCION_CLAUDE = "PCIA_WEB_PERMITIR_SUSCRIPCION"
+
 
 def _flag_activo(nombre: str) -> bool:
     return os.environ.get(nombre, "").strip().lower() in ("1", "true", "si")
@@ -117,6 +122,12 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/proveedores")
+def proveedores_disponibles() -> dict[str, bool]:
+    """Qué proveedores puede ofrecer esta instancia (el frontend los muestra)."""
+    return {"claude_subscription": _flag_activo(VAR_SUSCRIPCION_CLAUDE)}
+
+
 @app.post("/api/sessions")
 def crear_sesion(datos: NuevaSesionRequest, request: Request) -> dict[str, str]:
     try:
@@ -124,7 +135,9 @@ def crear_sesion(datos: NuevaSesionRequest, request: Request) -> dict[str, str]:
     except LimiteExcedidoError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     try:
-        config_proveedor = validar_config_proveedor(datos.model_dump())
+        config_proveedor = validar_config_proveedor(
+            datos.model_dump(), permitir_suscripcion=_flag_activo(VAR_SUSCRIPCION_CLAUDE)
+        )
         documentos = [(doc.nombre, doc.contenido) for doc in datos.documentos]
         sesion = gestor.crear(
             config_proveedor, documentos=documentos, spec_inicial=datos.spec_inicial
@@ -300,6 +313,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     escucha_local = args.host in HOSTS_LOCALES
+    if escucha_local:
+        os.environ.setdefault(VAR_SUSCRIPCION_CLAUDE, "1")
     if escucha_local and not args.sin_destinos_privados:
         os.environ.setdefault(VAR_DESTINOS_PRIVADOS, "1")
     elif not escucha_local:

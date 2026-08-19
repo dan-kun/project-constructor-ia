@@ -316,7 +316,9 @@ def test_validar_config_proveedor_openai_compat_requiere_base_url():
 
 
 def test_validar_config_proveedor_provider_invalido():
-    with pytest.raises(ConfigError, match="Elegí un proveedor"):
+    # claude_subscription se rechaza por defecto: depende de la CLI instalada
+    # en la máquina que sirve la app, que en una instancia publicada no existe.
+    with pytest.raises(ConfigError, match="ejecución local"):
         validar_config_proveedor({"provider": "claude_subscription"})
 
 
@@ -714,3 +716,28 @@ def test_estado_refleja_el_avance_del_orquestador(monkeypatch, tmp_path):
     # la fase avanza durante la corrida, no solo al final
     fases = [e.estado["fase"] for e in eventos if e.estado]
     assert "entrevista" in fases and "construccion" in fases
+
+
+# --- suscripción de Claude: solo en ejecución local ------------------------------
+
+
+def test_suscripcion_aceptada_cuando_se_permite():
+    config = validar_config_proveedor(
+        {"provider": "claude_subscription", "model": ""}, permitir_suscripcion=True
+    )
+
+    assert config == {"provider": "claude_subscription", "claude_subscription": {"model": None}}
+
+
+def test_suscripcion_acepta_modelo_explicito():
+    config = validar_config_proveedor(
+        {"provider": "claude_subscription", "model": "claude-sonnet-5"},
+        permitir_suscripcion=True,
+    )
+
+    assert config["claude_subscription"]["model"] == "claude-sonnet-5"
+
+
+def test_proveedor_invalido_sigue_rechazandose():
+    with pytest.raises(ConfigError, match="proveedor válido"):
+        validar_config_proveedor({"provider": "inventado"}, permitir_suscripcion=True)

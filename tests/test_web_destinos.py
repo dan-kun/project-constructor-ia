@@ -137,3 +137,23 @@ def test_flag_explicito_desactiva_aun_en_loopback(monkeypatch):
         _main_sin_servidor(monkeypatch, ["--host", "localhost", "--sin-destinos-privados"])
         is None
     )
+
+
+def test_loopback_habilita_la_suscripcion_de_claude(monkeypatch):
+    from pcia.web import app as modulo_app
+
+    monkeypatch.delenv(modulo_app.VAR_SUSCRIPCION_CLAUDE, raising=False)
+    _main_sin_servidor(monkeypatch, ["--host", "127.0.0.1"])
+    import os
+
+    assert os.environ.get(modulo_app.VAR_SUSCRIPCION_CLAUDE) == "1"
+
+
+def test_endpoint_de_proveedores_refleja_el_flag(monkeypatch):
+    from pcia.web import app as modulo_app
+
+    monkeypatch.setenv(modulo_app.VAR_SUSCRIPCION_CLAUDE, "1")
+    assert crear_cliente().get("/api/proveedores").json() == {"claude_subscription": True}
+
+    monkeypatch.delenv(modulo_app.VAR_SUSCRIPCION_CLAUDE)
+    assert crear_cliente().get("/api/proveedores").json() == {"claude_subscription": False}

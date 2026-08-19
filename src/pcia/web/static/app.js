@@ -89,8 +89,10 @@ document.querySelectorAll('input[name="provider"]').forEach((radio) => {
   radio.addEventListener("change", () => {
     const esAnthropic = radio.value === "anthropic_api" && radio.checked;
     if (!radio.checked) return;
-    document.getElementById("campos-anthropic").classList.toggle("oculto", !esAnthropic);
-    document.getElementById("campos-openai").classList.toggle("oculto", esAnthropic);
+    const proveedor = document.querySelector('input[name="provider"]:checked').value;
+    const esSuscripcion = proveedor === "claude_subscription";
+    document.getElementById("campos-anthropic").classList.toggle("oculto", !esAnthropic || esSuscripcion);
+    document.getElementById("campos-openai").classList.toggle("oculto", esAnthropic || esSuscripcion);
   });
 });
 
@@ -604,6 +606,17 @@ elInputTexto.addEventListener("keydown", (ev) => {
     if (!elInputTexto.disabled) elFormInput.requestSubmit();
   }
 });
+
+// La suscripción de Claude depende de la CLI instalada en el servidor: se
+// ofrece solo si esta instancia la permite (ver /api/proveedores).
+fetch("/api/proveedores")
+  .then((r) => r.json())
+  .then((p) => {
+    if (p.claude_subscription) {
+      document.getElementById("opcion-suscripcion").classList.remove("oculto");
+    }
+  })
+  .catch(() => {});
 
 document.getElementById("iniciar").addEventListener("click", iniciarSesion);
 

@@ -449,19 +449,35 @@ def _spec_desde_inicial(datos: dict[str, Any]) -> ProjectSpec:
     return spec
 
 
-def validar_config_proveedor(datos: dict[str, Any]) -> dict[str, Any]:
+def validar_config_proveedor(
+    datos: dict[str, Any], permitir_suscripcion: bool = False
+) -> dict[str, Any]:
     """Arma el dict tipo config.yaml a partir del formulario web y lo valida.
 
     No confía en el cliente más de lo necesario: solo arma la forma que
     ``crear_provider`` ya sabe validar (mismo contrato que config.yaml).
     """
     proveedor = datos.get("provider")
-    if proveedor not in ("anthropic_api", "openai_compat"):
+    permitidos = ("anthropic_api", "openai_compat")
+    if permitir_suscripcion:
+        permitidos += ("claude_subscription",)
+    if proveedor not in permitidos:
+        if proveedor == "claude_subscription":
+            raise ConfigError(
+                "'claude_subscription' solo está disponible en una ejecución local: "
+                "usa la CLI de Claude Code instalada en la máquina que sirve la "
+                "aplicación, que en una instancia publicada no existe (y no debería)."
+            )
         raise ConfigError(
-            "Elegí un proveedor para la demo web: 'anthropic_api' u 'openai_compat' "
-            "(claude_subscription requiere la CLI de Claude Code instalada en el "
-            "servidor y no está disponible en este entorno)."
+            "Elegí un proveedor válido para la interfaz web: "
+            + " o ".join(f"'{p}'" for p in permitidos)
+            + "."
         )
+    if proveedor == "claude_subscription":
+        # El adaptador delega en la CLI ya autenticada; el modelo es opcional
+        # (None = el que use Claude Code por defecto). No lleva API key.
+        modelo = (datos.get("model") or "").strip()
+        return {"provider": proveedor, proveedor: {"model": modelo or None}}
     seccion: dict[str, Any] = {"model": (datos.get("model") or "").strip()}
     if proveedor == "anthropic_api":
         seccion["api_key"] = (datos.get("api_key") or "").strip() or None

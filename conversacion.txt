@@ -1,0 +1,108 @@
+¡Bienvenido! Para comenzar, ¿cuál es el nombre de su proyecto y una breve descripción de su propósito?
+
+> transformar-data
+
+Perfecto. ¿Podría describir brevemente el propósito de su proyecto?
+
+> quiero tomar documentos, conexiones a distintas BD, traer info y pasarla por un depurador que convierta y homologue toda la data a una centralización que luego dispondra esta info via API
+
+Entendido. ¿Cuál es el tipo de proyecto? Por ejemplo, herramienta de integración de datos, sistema ETL, o algo más específico?
+
+> me parece que un poco de ambos que has mencionado
+
+Entiendo. ¿Confirmaría que el tipo de proyecto sería una combinación de 'herramienta de integración de datos' y 'sistema ETL'? O ¿prefiere definir un tipo específico diferente?
+
+> si, vamos con una combinacion
+
+Perfecto. ¿Cuál es el lenguaje de programación y el framework que prefiere usar para este proyecto? Por ejemplo, Python con Django, Node.js con Express, o cualquier otro que tenga en mente.
+
+> no tengo uno definido, cual sería el más eficaz, optimo y rapido para este tipo de proyecto?
+
+Para un proyecto de integración de datos y ETL, recomendaría Python con FastAPI (para la API) y bibliotecas como Pandas para procesamiento. Es rápido de desarrollar y tiene excelentes herramientas para transformación de datos. ¿Le gustaría explorar esta opción o tiene preferencias específicas?
+
+> me gusta tu recomendación
+
+Excelente elección. Para continuar, ¿cuál es el alcance de su proyecto? Por ejemplo, pequeño (prototipo o funcionalidad específica), mediano (múltiples fuentes de datos y funcionalidades robustas), o grande (escalable y con múltiples módulos)?
+
+> mediano
+
+Entendido. Para un proyecto de alcance mediano, ¿qué arquitectura propone? Por ejemplo, monolítica (sencilla y rápida), en capas (para separación de responsabilidades) o alguna otra. También, ¿qué base de datos utilizaría para la centralización de datos? (ej: PostgreSQL, MongoDB, o alguna específica)
+
+> necesito que sea en capas y usare postgeSQL
+
+Perfecto. Para seguridad, ¿qué tipo de autenticación necesitaría? (ej: OAuth2, JWT, o ninguna si es interno). También, ¿cómo gestionaría secretos (clave API, credenciales)? (ej: variables de entorno, AWS Secrets Manager, o ninguna si es público). Finalmente, ¿qué infraestructura usaría? (ej: nube (AWS/GCP), servidor propio, o local). Y ¿qué sistema CI/CD preferiría? (ej: GitHub Actions, Jenkins, o ninguno)
+
+> OAuth2, variables de entorno, servidor propio y GitHub Actions o posiblmente gitlab en el server propio
+
+Perfecto. Confirme si los siguientes parámetros son correctos:
+- Autenticación: OAuth2
+- Gestión de secretos: Variables de entorno
+- Infraestructura: Servidor propio
+- CI/CD: GitHub Actions o GitLab
+¿Desea ajustar algo antes de continuar?
+
+¿Confirmás la especificación? (enter = continuar, o escribí qué ajustar)
+
+>
+
+Auditoría de coherencia — semáforo: 🟡 amarillo
+🟡 [gestion-secretos-insegura] Uso de variables de entorno para gestión de secretos en un entorno de servidor propio, lo que expone riesgos de seguridad si el servidor no está correctamente protegido.
+   Corrección propuesta: Implementar un sistema de gestión de secretos más seguro, como un servicio de almacenamiento de secretos (ej: AWS Secrets Manager, HashiCorp Vault) o usar herramientas de encriptación para variables de entorno en el servidor.
+
+¿Asumís el riesgo 'gestion-secretos-insegura'? (s = asumir / N = corregir)
+
+> S
+
+Riesgo asumido y documentado: gestion-secretos-insegura
+
+Auditoría de coherencia — semáforo: 🟢 verde
+Sin hallazgos: la especificación es coherente.
+
+¿Cómo querés nombrar la carpeta del proyecto? (opcional — se genera en un directorio propio de tu sesión en el servidor, no en tu computadora; lo descargás como .zip al final)
+
+> beta_datos_transformer
+
+Proyecto generado con la plantilla 'fastapi' en /tmp/pcia-web-sesiones/ef47cbf77526434f9dfcbd7b8200ce9c/beta_datos_transformer (15 archivos):
+  - .env.example
+  - .github/workflows/ci.yml
+  - .gitignore
+  - Dockerfile
+  - README.md
+  - compose.yaml
+  - docs/adr/ADR-001-decisiones-iniciales.md
+  - pyproject.toml
+  - src/transformar_data/__init__.py
+  - src/transformar_data/config.py
+  - src/transformar_data/db.py
+  - src/transformar_data/main.py
+  - tests/conftest.py
+  - tests/test_config.py
+  - tests/test_health.py
+
+Verificación de sintaxis: 11 ok, 0 con errores, 4 sin verificador.
+✅ Todos los archivos verificables son válidos.
+
+Verificación profunda (builds, smoke tests y linters)…
+
+Resultado de la verificación profunda:
+✅ [docker-build] ok
+✅ [smoke-import-app] ok
+✅ [lint-ruff] ok
+
+⚠️ El proyecto se entrega con 1 riesgo(s) asumido(s):
+  - gestion-secretos-insegura: Uso de variables de entorno para gestión de secretos en un entorno de servidor propio, lo que expone riesgos de seguridad si el servidor no está correctamente protegido.
+
+Estado final de la entrega: ⚠️ aprobado con advertencias
+
+Especificación y registro del proyecto guardados en /tmp/pcia-web-sesiones/ef47cbf77526434f9dfcbd7b8200ce9c/memory/transformar-data-20260731-173631.json (duración total: 1288s)
+
+Memoria actualizada: 1 proyecto(s) registrado(s).
+Preferencias detectadas para precargar la próxima entrevista:
+- lenguaje: python (en 1 de 1 proyectos)
+- framework: fastapi, pandas (en 1 de 1 proyectos)
+- arquitectura: en capas (en 1 de 1 proyectos)
+- base_datos: postgresql (en 1 de 1 proyectos)
+- autenticacion: oauth2 (en 1 de 1 proyectos)
+- gestion_secretos: variables de entorno (en 1 de 1 proyectos)
+- infraestructura: servidor propio (en 1 de 1 proyectos)
+- ci_cd: github actions o gitlab (en 1 de 1 proyectos)
