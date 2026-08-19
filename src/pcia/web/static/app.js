@@ -332,7 +332,11 @@ async function iniciarSesion() {
   guardarPreferencias();
   const provider = document.querySelector('input[name="provider"]:checked').value;
   const payload = { provider };
-  if (provider === "anthropic_api") {
+  if (provider === "claude_subscription") {
+    // La CLI ya está autenticada y elige su modelo por defecto: mandar el
+    // del selector de otro proveedor la hace fallar con unrecognized_model.
+    payload.model = "";
+  } else if (provider === "anthropic_api") {
     payload.api_key = document.getElementById("anthropic-key").value;
     payload.model = valorModelo("anthropic-model", "anthropic-model-custom");
   } else {
