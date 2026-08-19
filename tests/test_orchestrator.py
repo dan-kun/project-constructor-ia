@@ -940,3 +940,40 @@ def test_entrevista_arranca_precargada_con_el_historial(tmp_path):
 
     system_prompt, _ = provider2.llamadas[0]
     assert "postgresql (en 1 de 1 proyectos)" in system_prompt
+
+
+# --- reconocimiento de confirmaciones en lenguaje natural -------------------------
+
+
+@pytest.mark.parametrize(
+    "respuesta",
+    [
+        "", "  ", "s", "si", "Sí", "ok", "dale", "listo", "no", "Nada",
+        "seguir", "continuemos", "adelante", "perfecto",
+        "dame los archivos, no hay nada más que hacer",
+        "no hay nada que ajustar",
+        "así está bien, avancemos",
+        "sin cambios",
+    ],
+)
+def test_se_reconocen_como_confirmacion(respuesta):
+    """La interfaz es conversacional: el usuario responde en lenguaje natural,
+    no con la tecla que sugiere el prompt (ver docs/IA-COWORK.md §3.2)."""
+    from pcia.orchestrator.loop import es_confirmacion
+
+    assert es_confirmacion(respuesta)
+
+
+@pytest.mark.parametrize(
+    "respuesta",
+    [
+        "cambiá la base de datos a mysql",
+        "quiero seguir usando postgres pero con replicas",
+        "no me gusta, usá otra arquitectura",
+        "agregá autenticación por OAuth",
+    ],
+)
+def test_un_ajuste_real_no_se_confunde_con_confirmacion(respuesta):
+    from pcia.orchestrator.loop import es_confirmacion
+
+    assert not es_confirmacion(respuesta)

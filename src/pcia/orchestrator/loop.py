@@ -67,8 +67,32 @@ class LimitesCiclo:
     max_correcciones_build: int = MAX_CORRECCIONES_BUILD
     max_ajustes_por_hallazgo: int = MAX_AJUSTES_POR_HALLAZGO
 
-# Respuestas (normalizadas) que confirman la spec al cierre de la entrevista.
-CONFIRMACIONES = ("", "s", "si", "ok", "dale", "listo")
+# Respuestas (normalizadas) que confirman: "no tengo nada que ajustar, seguí".
+# La lista es deliberadamente amplia porque la interfaz es conversacional: el
+# usuario responde en lenguaje natural, no con la tecla que el prompt sugiere
+# (mismo modo de falla que generó el proyecto llamado "asi esta bien").
+CONFIRMACIONES = (
+    "", "s", "si", "sip", "ok", "oka", "okey", "dale", "listo", "no", "nada",
+    "ninguno", "ninguna", "seguir", "sigamos", "segui", "continuar",
+    "continuemos", "adelante", "confirmo", "correcto", "perfecto",
+)
+
+# Frases de cierre que aparecen dentro de una respuesta más larga. Se eligen
+# inequívocas a propósito: un "seguir" suelto podría venir de "quiero seguir
+# usando postgres", que sí es un ajuste.
+FRASES_DE_CIERRE = (
+    "no hay nada", "nada que ajustar", "nada mas que", "nada que corregir",
+    "sin cambios", "asi esta bien", "esta bien asi", "todo bien",
+    "dame los archivos", "avanza", "avancemos",
+)
+
+
+def es_confirmacion(texto: str) -> bool:
+    """¿El usuario está diciendo "no tengo nada que ajustar, seguí"?"""
+    normalizado = normalizar(texto.strip())
+    return normalizado in CONFIRMACIONES or any(
+        frase in normalizado for frase in FRASES_DE_CIERRE
+    )
 
 EMOJI_SEMAFORO = {
     Severidad.VERDE: "🟢",
@@ -265,7 +289,7 @@ class Orquestador:
                     "¿Confirmás la especificación? "
                     "(enter = continuar, o escribí qué ajustar) "
                 ).strip()
-                if normalizar(ajuste) in CONFIRMACIONES:
+                if es_confirmacion(ajuste):
                     return Fase.AUDITORIA
                 entrada = (
                     f"El usuario pide un ajuste antes de cerrar: {ajuste}. "
@@ -403,7 +427,7 @@ class Orquestador:
                 "(enter para seguir con el siguiente hallazgo, o escribí un "
                 "ajuste a esta corrección) "
             ).strip()
-            if normalizar(ajuste) in CONFIRMACIONES:
+            if es_confirmacion(ajuste):
                 return
             respuesta = self._entrevistador.responder(
                 f"El usuario pide un ajuste sobre cómo se resolvió el hallazgo "
